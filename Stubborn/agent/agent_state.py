@@ -13,6 +13,7 @@ from agent.mapping_module import Semantic_Mapping
 from constants import habitat_goal_label_to_similar_coco
 from arguments import get_args
 import pickle
+import skimage.transform as st
 
 
 
@@ -431,12 +432,15 @@ class Agent_State:
 
 
     def upd_agent_state(self,obs,infos):
-
+        """
+        Exploration
+        """
         args = self.args
         self.poses = torch.from_numpy(np.asarray(
             infos['sensor_pose'] )
         ).float().to(self.device)
 
+        # local_map: (9,w,h): last 5 are semantic
         _, self.local_map, _, self.local_pose = \
             self.sem_map_module(obs, self.poses, self.local_map, self.local_pose,self)
 
@@ -461,7 +465,13 @@ class Agent_State:
                 if stuck:
                     self.stuck = True
 
+
+        # TODO add semantic prediction here....
+        # self.rednet(obs,) #TODO where to get depth from
+        # semantic state info already in `obs`
+        # breakpoint()
         if self.l_step == args.num_local_steps - 1:
+            # at the last local step
             self.l_step = 0
             # For every global step, update the full and local maps
 
@@ -530,6 +540,7 @@ class Agent_State:
         # now change to >= 0.85 on the single channel (channel 5)
         if self.args.only_explore == 0:
             max_score = torch.max(self.local_grid[5][self.local_grid[4] == 0])
+            # breakpoint()
             if max_score > self.score_threshold:
                 indices = torch.nonzero(self.local_grid[5] >= max_score)
                 self.cat_semantic_map.fill_(0.)
@@ -571,6 +582,11 @@ class Agent_State:
 
             p_input['sem_map_pred'] = self.local_map[4:, :,
                                       :].argmax(0).cpu().numpy()
+            # Upscaling....
+            ds = args.env_frame_width // args.frame_width  # Downscaling factor
+            p_input['curr_obs_seg'] = obs[0,4:].cpu().numpy().repeat(repeats=ds,axis=1).repeat(repeats=ds,axis=2)
+            p_input['obs_full_seg'] = infos['full_segmentation']
+            # obs[0,4:,ds // 2::ds,ds // 2::ds]
             p_input['opp_score'] = maxi
             p_input['opp_cat'] = maxc
             p_input['itself'] = maxa

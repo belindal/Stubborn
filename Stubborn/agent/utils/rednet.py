@@ -28,8 +28,9 @@ from detectron2.modeling import build_model
 from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.utils.visualizer import ColorMode, Visualizer
 import detectron2.data.transforms as T
+from transformers import GPT2LMHeadModel, GPT2TokenizerFast
 
-from constants import coco_categories_mapping,fourty221, twentyone240,compatible_dict, white_list,black_list
+from constants import coco_categories_mapping,fourty221, twentyone240,compatible_dict, white_list,black_list, mpcat40_labels, room_types, cooccur_p_cache
 
 
 # Resnet model urls
@@ -273,6 +274,7 @@ class RedNet(nn.Module):
         scores, *_ = self.forward_upsample(*fuses)
         # debug_tensor('scores', scores)
         # return features_encoder, features_lastlayer, scores
+        # (n_classes, h, w)
         return scores
 
 
@@ -457,57 +459,141 @@ def load_rednet(device, ckpt="", resize=True, stabilize=False):
 
 
 class SemanticPredRedNet():
-
     def __init__(self, args):
         self.segmentation_model = load_rednet(args.device,ckpt = args.checkpt, resize = True)
         self.segmentation_model.eval()
         self.args = args
         self.all_labels = set()
-        self.threshold = 0.8
+        self.threshold_full = 0.8
+        self.threshold_quick = 0.7
         self.gt_mask = None
         self.goal_cat = None
-
-    def get_prediction(self, img,depth):
-        args = self.args
+        if self.args.use_lm:
+            self.softmax = nn.Softmax(0)
+            self.tokenizer = GPT2TokenizerFast.from_pretrained("gpt2")
+            self.lm = GPT2LMHeadModel.from_pretrained("gpt2")
+            self.lm = self.lm.to('cuda')
+    
+    def forward_rednet(self, img, depth):
         #image_list = []
         img = img[np.newaxis, :, :, :]
         depth = depth[np.newaxis, :, :, :]
-        #print("input shape is ",img.shape)
-        #print(self.args.device)
         img = torch.from_numpy(img).float().to(self.args.device)
         depth = torch.from_numpy(depth).float().to(self.args.device)
         output, mask = self.segmentation_model(img,depth)
+
         #print("output shape is",output.shape)
-        output = output[0]
-        output = output *0.1
-        output[output<self.threshold] = 0 #0.9: 30 1.1: 26
+        output = output[0] * 0.1
+        # output[output<min(self.threshold_full, self.threshold_quick)] = 0  #TODO increase threshold(?)
+        return output, mask, img, depth
+
+
+    def get_prediction_full(self, img,depth,rednet_output=None, rednet_output_mask=None):
+        """
+        Get prediction for all objects
+        """
+        if rednet_output is None:
+            output, mask = self.forward_rednet(img,depth)
+        else:
+            output, mask = rednet_output, rednet_output_mask
+        output[output<self.threshold_full] = 0 #0.9: 30 1.1: 26
         semantic_input = np.zeros((img.shape[1], img.shape[2], 23 ))
-        for i in range(0, 40):
-            if i in fourty221.keys():
-                output[i][mask != i] = 0
-                j = fourty221[i]
-                if (not (self.gt_mask is None)) and j == self.goal_cat:
-                    semantic_input[:,:,j] += np.copy(self.gt_mask)
-                    self.gt_mask = None
-                else:
-                    semantic_input[:, :, j] += (
-                        output[i]).cpu().numpy()
+        # for i in range(0, 40):
+        for i in fourty221.keys():  # map from 40 MPCAT labels -> 21 HABITAT labels
+            output[i][mask != i] = 0
+            j = fourty221[i]
+            if (not (self.gt_mask is None)) and j == self.goal_cat:
+                semantic_input[:,:,j] += np.copy(self.gt_mask)
+                self.gt_mask = None
+            else:
+                semantic_input[:, :, j] += output[i].cpu().numpy()
 
         return semantic_input, mask
+
+    def get_prediction_quick(self, img,depth,goal_cat,rednet_output=None):
+        """
+        Only get prediction for 1 (target) object
+        """
+        ori_goal = goal_cat
+        goal_cat = twentyone240[goal_cat]
+        if rednet_output is None:
+            output, mask = self.forward_rednet(img,depth)
+        else:
+            output = rednet_output
+        max_score = max(self.threshold_quick, torch.max(output[goal_cat]) - 0.05)
+
+        if self.args.use_lm:
+            # goal_cat_score = torch.max(output[goal_cat])
+            # if self.
+            # get other objects that are present
+            # output[~goal_cat][output[~goal_cat] < self.threshold_full] = 0
+            present_objs = []
+            for obj_idx, obj in enumerate(mpcat40_labels):
+                if (
+                    obj_idx < len(output) and (output[obj_idx] > self.threshold_full).any()
+                    and obj not in ["wall", "floor", "ceiling", "furniture", "appliances", "objects", "misc", "unlabeled"]
+                    and obj != mpcat40_labels[goal_cat]
+                ):
+                    present_objs.append(obj)
+
+            if len(present_objs) > 0:
+                # p(target|obj) ~ sum_room p(target|room)p(room|obj)
+                p_target_given_objs_lm = np.zeros(len(present_objs))
+
+                target_room_probs = []
+                for room_type in room_types:
+                    if (mpcat40_labels[goal_cat], room_type) in cooccur_p_cache:
+                        target_p = cooccur_p_cache[(mpcat40_labels[goal_cat], room_type)]
+                    else:
+                        target_toks = self.tokenizer(f"The {mpcat40_labels[goal_cat]} is in the {room_type}.", return_tensors="pt").to('cuda')
+                        target_loss = self.lm(target_toks.input_ids, labels=target_toks.input_ids).loss
+                        target_p = torch.exp(-target_loss).item()
+                        cooccur_p_cache[(mpcat40_labels[goal_cat], room_type)] = target_p
+                    target_room_probs.append(target_p)
+                target_room_probs = np.array([room_p / sum(target_room_probs) for room_p in target_room_probs])
+
+                for po_idx, present_obj in enumerate(present_objs):
+                    if present_obj == mpcat40_labels[goal_cat]: continue
+                    obj_room_probs = []
+                    for room_type in room_types:
+                        if (present_obj, room_type) in cooccur_p_cache:
+                            obj_p = cooccur_p_cache[(present_obj, room_type)]
+                        else:
+                            obj_toks = self.tokenizer(f"The {present_obj.replace('_', ' ')} is in the {room_type}.", return_tensors="pt").to('cuda')
+                            obj_loss = self.lm(obj_toks.input_ids, labels=obj_toks.input_ids).loss
+                            obj_p = torch.exp(-obj_loss).item()
+                            cooccur_p_cache[(present_obj, room_type)] = obj_p
+                        obj_room_probs.append(obj_p)
+                    obj_room_probs = np.array([obj_p / sum(obj_room_probs) for obj_p in obj_room_probs])
+
+                    p_target_given_objs_lm[po_idx] += np.dot(target_room_probs, obj_room_probs)
+
+                # TODO normalize to be a proability distribution????---what are the returned logits???
+                # p(target|o1,o2,...) = p(o1,o2,...|target)p(target)/p(o1,o2,...) ~ p(o1|target)p(target)/p(o1)
+                output_p = self.softmax(output*10).max(-1).values.max(-1).values  # get prior probabilities of each obj category
+                chosen_obj = present_objs[p_target_given_objs_lm.argmax()]  # TODO later get the largest prior scoring one out of these
+                posterior_goal_prob = output_p[goal_cat] * p_target_given_objs_lm.max() / output_p[mpcat40_labels.index(chosen_obj)]
+
+                if posterior_goal_prob > 0.8:
+                    # make sure max is large
+                    output[goal_cat] = 1
+                # if p_target_given_objs_lm.argmax()
+
+        output[goal_cat][output[goal_cat] < max_score] = 0
+
+        semantic_input = np.zeros((img.shape[1], img.shape[2], 5 + self.args.use_gt_mask ))
+        semantic_input[:,:,0] = output[goal_cat].cpu().numpy()
+        if self.gt_mask is not None:
+            semantic_input[:,:,4] = self.gt_mask
+        if self.args.record_conflict == 1:
+            semantic_input[:,:,1] = self.get_conflict(output,goal_cat,ori_goal)
+        semantic_input[:,:,2] = self.get_black_white_list(output,goal_cat,ori_goal,black_list)
+        semantic_input[:,:,3] = self.get_black_white_list(output,goal_cat,ori_goal,white_list)
+        return semantic_input
 
     def set_gt_mask(self,gt_mask,goal_cat): # goal cat is as it is in fourty221 mapping
         self.gt_mask = gt_mask
         self.goal_cat = goal_cat
-
-class QuickSemanticPredRedNet():
-
-    def __init__(self, args):
-        self.segmentation_model = load_rednet(args.device,ckpt = args.checkpt, resize = True)
-        self.segmentation_model.eval()
-        self.args = args
-        self.threshold = 0.7
-        self.all_labels = set()
-        self.gt_mask = None
 
     def get_conflict(self,output,goal_cat,ori_goal):
         output = torch.clone(output)
@@ -540,40 +626,18 @@ class QuickSemanticPredRedNet():
         ans[ans < 0.9] = 0
         return ans.cpu().numpy()
 
-    def get_prediction(self, img,depth,goal_cat):
-        ori_goal = goal_cat
-        goal_cat = twentyone240[goal_cat]
-        args = self.args
-        #image_list = []
-        img = img[np.newaxis, :, :, :]
-        depth = depth[np.newaxis, :, :, :]
-        #print("input shape is ",img.shape)
-        #print(self.args.device)
-        img = torch.from_numpy(img).float().to(self.args.device)
-        depth = torch.from_numpy(depth).float().to(self.args.device)
-        output, mask = self.segmentation_model(img,depth)
-        #print("output shape is",output.shape)
-        output = output[0]
-        output[goal_cat] *= 0.1
-        max_score = torch.max(output[goal_cat]) - 0.05
-        if self.threshold > max_score:
-            max_score = self.threshold
-
-
-        output[goal_cat][output[goal_cat] < max_score] = 0
-
-        semantic_input = np.zeros((img.shape[1], img.shape[2], 5 + self.args.use_gt_mask ))
-        semantic_input[:,:,0] = output[goal_cat].cpu().numpy()
-        if self.gt_mask is not None:
-            semantic_input[:,:,4] = self.gt_mask
-        if self.args.record_conflict == 1:
-            semantic_input[:,:,1] = self.get_conflict(output,goal_cat,ori_goal)
-        semantic_input[:,:,2] = self.get_black_white_list(output,goal_cat,ori_goal,black_list)
-        semantic_input[:,:,3] = self.get_black_white_list(output,goal_cat,ori_goal,white_list)
-        return semantic_input
-
     def set_gt_mask(self,gt_mask):
         self.gt_mask = gt_mask
+
+# class QuickSemanticPredRedNet():
+
+#     def __init__(self, args):
+#         self.segmentation_model = load_rednet(args.device,ckpt = args.checkpt, resize = True)
+#         self.segmentation_model.eval()
+#         self.args = args
+#         self.threshold = 0.7
+#         self.all_labels = set()
+#         self.gt_mask = None
 
 
 def compress_sem_map(sem_map):

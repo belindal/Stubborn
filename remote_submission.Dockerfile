@@ -1,4 +1,4 @@
-FROM fairembodied/habitat-challenge:testing_2021_habitat_base_docker
+FROM fairembodied/habitat-challenge:testing_2022_habitat_base_docker
 
 RUN /bin/bash -c ". activate habitat"
 
@@ -18,12 +18,12 @@ RUN /bin/bash -c ". activate habitat; pip install torchvision==0.7.0 "
 RUN /bin/bash -c ". activate habitat; pip install gym==0.10.5 "
 ARG INCUBATOR_VER=unknown
 ADD remote_submission.sh remote_submission.sh
-ADD configs/challenge_objectnav2021.local.rgbd.yaml /challenge_objectnav2021.local.rgbd.yaml
+ADD configs/challenge_objectnav2022.local.rgbd.yaml /challenge_objectnav2022.local.rgbd.yaml
 ENV AGENT_EVALUATION_TYPE remote
 ADD Stubborn Stubborn
 ENV PYTHONPATH "${PYTHONPATH}:/Stubborn"
 
 
-ENV TRACK_CONFIG_FILE "/challenge_objectnav2021.local.rgbd.yaml"
+ENV TRACK_CONFIG_FILE "/challenge_objectnav2022.local.rgbd.yaml"
 
 CMD ["/bin/bash", "-c", "source activate habitat && export PYTHONPATH=/evalai-remote-evaluation:$PYTHONPATH && export CHALLENGE_CONFIG_FILE=$TRACK_CONFIG_FILE && bash remote_submission.sh"]

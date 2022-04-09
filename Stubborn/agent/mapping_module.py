@@ -86,6 +86,8 @@ class Semantic_Mapping(nn.Module):
         XYZ_cm_std[..., 2] = XYZ_cm_std[..., 2] / z_resolution
         XYZ_cm_std[..., 2] = (XYZ_cm_std[..., 2] -
                               (max_h + min_h) // 2.) / (max_h - min_h) * 2.
+        # semantic segmentations (1,6,h*w)
+        # for dim1: 0 is [1...1], 1-5 is as documented under `sem_seg_pred`
         self.feat[:, 1:, :] = nn.AvgPool2d(self.du_scale)(
             obs[:, 4:, :, :]
         ).view(bs, c - 4, h // self.du_scale * w // self.du_scale)
@@ -95,18 +97,20 @@ class Semantic_Mapping(nn.Module):
         XYZ_cm_std = XYZ_cm_std.view(XYZ_cm_std.shape[0],
                                      XYZ_cm_std.shape[1],
                                      XYZ_cm_std.shape[2] * XYZ_cm_std.shape[3])
-
+        # transform from 2d obs image (1,6,h*w) -> 3d? (1,6,W,H,D)
         voxels = du.splat_feat_nd(
             self.init_grid * 0., self.feat, XYZ_cm_std).transpose(2, 3)
 
         min_z = int(25 / z_resolution - min_h)
         max_z = int((self.agent_height + 1) / z_resolution - min_h)
 
+        # aggregate over depth from min_z:max_z (to get what agent sees)
         agent_height_proj = voxels[..., min_z:max_z].sum(4)
+        # aggregate over depth (overall)
         all_height_proj = voxels.sum(4)
 
         # suspect that it is in here we deal with mask and confidence scores
-
+        # mask
         fp_map_pred = agent_height_proj[:, 0:1, :, :]
         fp_exp_pred = all_height_proj[:, 0:1, :, :]
         fp_map_pred = fp_map_pred / self.map_pred_threshold
@@ -125,6 +129,7 @@ class Semantic_Mapping(nn.Module):
         x2 = x1 + self.vision_range
         y1 = self.map_size_cm // (self.resolution * 2)
         y2 = y1 + self.vision_range
+        # (1,9,w,h)
         agent_view[:, 0:1, y1:y2, x1:x2] = fp_map_pred
         agent_view[:, 1:2, y1:y2, x1:x2] = fp_exp_pred
         # look at this line
@@ -165,13 +170,15 @@ class Semantic_Mapping(nn.Module):
 
         rotated = F.grid_sample(agent_view, rot_mat, align_corners=True)
         translated = F.grid_sample(rotated, trans_mat, align_corners=True)
+        # rotate and translate (into top-down map(?)) based on new estimate (1,1,9,w,h)
         t2 = translated.unsqueeze(1)
 
         for i in range(4,4+2+2+self.args.use_gt_mask):
             k = torch.max(self.feat[0,i-3,:])
+            # make mask (set any non-zero to max value for channel)
             t2[0,0,i,:,:][t2[0,0,i,:,:]>0.0] = k
         #t2[t2>0.0] = 0.88
-        maps2 = torch.cat((maps_last.unsqueeze(1), t2), 1)
+        maps2 = torch.cat((maps_last.unsqueeze(1), t2), 1)  # [1,2(lastmask,currmask),9,w,h]
         #total view: correspond to exp, channel 1
         if self.args.record_frames == 2:
             agent_states.local_grid[0] += torch.clone(nn.MaxPool2d(self.args.grid_resolution)(
@@ -205,7 +212,7 @@ class Semantic_Mapping(nn.Module):
                     agent_states.local_grid[3,r2,c2] = torch.max(agent_states.local_grid[3,r2,c2],angle)
 
 
-        map_pred, _ = torch.max(maps2, 1)
+        map_pred, _ = torch.max(maps2, 1)  # [1,9,w,h]
         agent_states.local_grid[5,:,:] = torch.clone(nn.MaxPool2d(self.args.grid_resolution)(
             map_pred[0, 4:5, :, :])[0])
 

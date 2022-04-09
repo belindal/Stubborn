@@ -85,28 +85,28 @@ whitelist_map = {
 }
 
 habitat_labels_r = {
-            0:'background',
-            1:'chair',
-            2:'table',
-            3:'picture',
-            4:'cabinet',
-            5:'cushion',
-            6:'sofa',
-            7:'bed',
-            8:'chest_of_drawers',
-            9:'plant',
-            10:'sink',
-            11:'toilet',
-            12:'stool',
-            13:'towel',
-            14:'tv_monitor',
-            15:'shower',
-            16:'bathtub',
-            17:'counter',
-            18:'fireplace',
-            19:'gym_equipment',
-            20:'seating',
-            21:'clothes',
+    0:'background',
+    1:'chair',
+    2:'table',
+    3:'picture',
+    4:'cabinet',
+    5:'cushion',
+    6:'sofa',
+    7:'bed',
+    8:'chest_of_drawers',
+    9:'plant',
+    10:'sink',
+    11:'toilet',
+    12:'stool',
+    13:'towel',
+    14:'tv_monitor',
+    15:'shower',
+    16:'bathtub',
+    17:'counter',
+    18:'fireplace',
+    19:'gym_equipment',
+    20:'seating',
+    21:'clothes',
 }
 
 hab2coco = {
@@ -255,6 +255,19 @@ color_palette = [
 0.9400000000000001, 0.66, 0.5531999999999998,
 0.3400000000000001, 0.96, 0.2531999999999998,
 ]
+
+room_types = [
+    "bedroom",
+    "bathroom",
+    "kitchen",
+    "living room",
+    "dining room",
+    "office",
+    "laundry room",
+    "hallway"
+]
+
+cooccur_p_cache = {}
 
 # Pulled from https://github.com/niessner/Matterport/blob/master/metadata/category_mapping.tsv
 mpcat40_labels = [

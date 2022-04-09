@@ -31,6 +31,7 @@ class StubbornAgent(habitat.Agent):
         # towel tv shower gym clothes
         # use a lower confidence score threshold for those categories
         self.low_score_categories = {13,14,15,19,21}
+
     def reset(self):
         self.agent_helper.reset()
         self.agent_states.reset()
@@ -48,16 +49,26 @@ class StubbornAgent(habitat.Agent):
         if self.timestep > 495:
             return {'action': 0}
         #get first preprocess
+        # if observations['semantic'].any():
+        #     breakpoint()
         goal = observations['objectgoal']
         goal = goal[0]+1
         if goal in self.low_score_categories:
             self.agent_states.score_threshold = self.low_score_threshold
+        if observations['semantic'].any():
+            breakpoint()
 
         info = self.get_info(observations)
 
         # get second preprocess
         self.agent_helper.set_goal_cat(goal)
+        # obs = (already has semantic info)
         obs, info = self.agent_helper.preprocess_inputs(observations['rgb'],observations['depth'],info)
+        # obs : np.concatenate((rgb:3, depth:1, sem_seg_pred:5), axis=2).transpose(2, 0, 1)
+        # [(rgb:3,depth:1,sem_seg_pred:5),w,h]
+        # sem_seg_pred: [goal_cat,conflict(?),blacklist,whitelist,0]
+        # obs : np.concatenate((rgb, depth, sem_seg_pred), axis=2).transpose(2, 0, 1)
+        # breakpoint()
         info['goal_cat_id'] = goal
         info['goal_name'] = habitat_labels_r[goal]
         obs = obs[np.newaxis,:,:,:]

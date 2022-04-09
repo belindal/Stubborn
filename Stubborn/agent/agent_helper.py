@@ -8,8 +8,8 @@ from torchvision import transforms
 import matplotlib.pyplot as plt
 import math
 from agent.utils.fmm_planner import FMMPlanner
-from agent.utils.rednet import QuickSemanticPredRedNet
-from constants import color_palette
+from agent.utils.rednet import SemanticPredRedNet
+from constants import color_palette, habitat_labels_r, mpcat40_labels
 import agent.utils.pose as pu
 import agent.utils.visualization as vu
 
@@ -60,7 +60,7 @@ class Agent_Helper:
         if args.sem_gpu_id == -1:
             args.sem_gpu_id = 1
 
-        self.sem_pred_rednet = QuickSemanticPredRedNet(args)
+        self.sem_pred_rednet = SemanticPredRedNet(args)
 
         # initializations for planning:
         self.selem = skimage.morphology.disk(3)
@@ -148,7 +148,7 @@ class Agent_Helper:
                     'goal'      (ndarray): (M, M) mat denoting goal locations
                     'pose_pred' (ndarray): (7,) array denoting pose (x,y,o)
                                  and planning window (gx1, gx2, gy1, gy2)
-                     'found_goal' (bool): whether the goal object is found
+                    'found_goal' (bool): whether the goal object is found
 
         Returns:
             obs (ndarray): preprocessed observations ((4+C) x H x W)
@@ -187,13 +187,14 @@ class Agent_Helper:
 
     def preprocess_inputs(self,rgb,depth,info,rew = 0):
         # preprocess obs
-        obs = self._preprocess_obs(rgb,depth)
+        obs, sem_seg_pred_full = self._preprocess_obs(rgb,depth)
         self.obs = obs
         self.info = info
         if 'g_reward' not in info.keys():
             info['g_reward'] = 0
 
         info['g_reward'] += rew
+        info['full_segmentation'] = sem_seg_pred_full
         return obs, info
 
 
@@ -453,10 +454,8 @@ class Agent_Helper:
 
     def _preprocess_obs(self, rgb, depth, use_seg=True):
         args = self.args
-        sem_seg_pred = self._get_sem_pred(
+        sem_seg_pred_goal, sem_seg_pred_full = self._get_sem_pred(
             rgb.astype(np.uint8), use_seg=use_seg, depth=depth)
-
-
 
         depth = self._preprocess_depth(depth, args.min_depth, args.max_depth)
 
@@ -464,13 +463,14 @@ class Agent_Helper:
         if ds != 1:
             rgb = np.asarray(self.res(rgb.astype(np.uint8)))
             depth = depth[ds // 2::ds, ds // 2::ds]
-            sem_seg_pred = sem_seg_pred[ds // 2::ds, ds // 2::ds]
+            sem_seg_pred_goal = sem_seg_pred_goal[ds // 2::ds, ds // 2::ds]
+            # sem_seg_pred_full = sem_seg_pred_full[]
 
         depth = np.expand_dims(depth, axis=2)
-        state = np.concatenate((rgb, depth, sem_seg_pred),
+        state = np.concatenate((rgb, depth, sem_seg_pred_goal),
                                axis=2).transpose(2, 0, 1)
 
-        return state
+        return state, sem_seg_pred_full
 
     def _preprocess_depth(self, depth, min_d, max_d):
         depth = depth[:, :, 0] * 1
@@ -487,20 +487,41 @@ class Agent_Helper:
         return depth
 
     def call_sem(self,rgb,depth):
-        self.sem_pred_rednet.get_prediction(rgb, depth)
+        self.sem_pred_rednet.get_prediction_full(rgb, depth)
 
     def _get_sem_pred(self, rgb, use_seg=True,depth = None):
         if self.args.print_images == 1:
             self.rgb_vis = rgb
 
-        semantic_pred_rednet = self.sem_pred_rednet.get_prediction(rgb,depth,self.goal_cat)
-        return semantic_pred_rednet.astype(np.float32)
+        rednet_output, rednet_output_mask, rgb, depth = self.sem_pred_rednet.forward_rednet(rgb, depth)
+        if self.args.print_images == 1:
+            rednet_output_vis = rednet_output.clone()
+            rednet_output_vis[rednet_output_vis<self.sem_pred_rednet.threshold_full] = 0  #TODO increase threshold(?)
+            # rednet_output_vis_p = self.sem_pred_rednet.softmax(rednet_output_vis*10)
+            # rednet_output_vis_p[rednet_output_vis_p < 0.95] = 0
+        else:
+            rednet_output_vis = None
+        # if self.args.use_semantics:  # TODO different flag for this (use_semantics vs. print_semantics)
+        #     full_semantic_pred_rednet, _ = self.sem_pred_rednet.get_prediction_full(
+        #         rgb,depth,rednet_output=rednet_output.clone(),rednet_output_mask=rednet_output_mask.clone(),
+        #     )
+        #     full_semantic_pred_rednet = full_semantic_pred_rednet.astype(np.float32)
+        # else:
+        #     full_semantic_pred_rednet = None
+        semantic_pred_rednet = self.sem_pred_rednet.get_prediction_quick(rgb,depth,self.goal_cat,rednet_output=rednet_output.clone()).astype(np.float32)
+        return semantic_pred_rednet, rednet_output_vis
 
     def save_semantic(self, img,fn):
         plt.figure(figsize=(12, 8))
         plt.imshow(img)
         plt.savefig(fn)
         plt.close()
+
+    def get_spaced_colors(self, n): 
+        max_value = 16581375 #255**3 
+        interval = int(max_value / n) 
+        colors = [hex(I)[2:].zfill(6) for I in range(0, max_value, interval)]
+        return [(int(i[:2], 16), int(i[2:4], 16), int(i[4:], 16)) for i in colors] 
 
     def _visualize(self, inputs):
         args = self.args
@@ -519,9 +540,27 @@ class Agent_Helper:
         start_x, start_y, start_o, gx1, gx2, gy1, gy2 = inputs['pose_pred']
         goal = inputs['goal']
 
-
         sem_map = inputs['sem_map_pred']
         #exit(0)
+        obs_sem = inputs['curr_obs_seg'][0]
+        if self.args.use_semantics:
+            # inputs['obs_full_seg'] = inputs['obs_full_seg'].transpose(2,0,1)
+            inputs['obs_full_seg'] = inputs['obs_full_seg'].cpu().numpy()
+            obs_full_seg_vis = np.ones((inputs['obs_full_seg'].shape[1],inputs['obs_full_seg'].shape[2],3)) * 255
+            colors = self.get_spaced_colors(inputs['obs_full_seg'].shape[0]-1)
+            all_present_objs = {}
+            if len(inputs['obs_full_seg']) < 30: objects = habitat_labels_r
+            else: objects = mpcat40_labels
+            for obj_label in range(len(objects)):  # label 0 is background
+                if obj_label == len(inputs['obs_full_seg']): break
+                if inputs['obs_full_seg'][obj_label].any():
+                    # add a label
+                    all_present_objs[objects[obj_label]] = colors[obj_label-1]
+                # if habitat_labels_r[obj_label] == 'background':
+                #     # use white
+                #     obs_full_seg_vis[inputs['obs_full_seg'][obj_label] > 0] += 255
+                # else:
+                obs_full_seg_vis[inputs['obs_full_seg'][obj_label] > 0] = colors[obj_label-1]
 
         if 'itself' in inputs.keys():
             my_score = inputs['itself']
@@ -574,6 +613,20 @@ class Agent_Helper:
                                  interpolation=cv2.INTER_NEAREST)
         self.vis_image[50:530, 15:655] = self.rgb_vis
         self.vis_image[50:530, 670:1150] = sem_map_vis
+        # self.vis_image[550:1030, 15:655] = (
+        #     obs_sem[:,:,np.newaxis]*255
+        # ).astype(np.uint)  # TODO upscale
+        if self.args.use_semantics:
+            self.vis_image[550:1030, 15:655] = obs_full_seg_vis
+            # self.vis_image[550:, 670:1150] = legend(all_present_objs)
+            for obj_idx, obj in enumerate(all_present_objs):
+                cv2.putText(self.vis_image, obj, 
+                    (690 + 150 * (obj_idx % 3), 550+20*(obj_idx // 3)), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 
+                    1,
+                    all_present_objs[obj],
+                    1,
+                    2)
 
         pos = (
             (start_x * 100. / args.map_resolution - gy1)
@@ -589,10 +642,10 @@ class Agent_Helper:
                  int(color_palette[9] * 255))
         #cv2.drawContours(self.vis_image, [agent_arrow], 0, color, -1) # TODO: change back
 
-        if args.visualize:
-            # Displaying the image
-            cv2.imshow("Thread {}".format(self.rank), self.vis_image)
-            cv2.waitKey(1)
+        # if args.visualize:
+        #     # Displaying the image
+        #     cv2.imshow("Thread {}".format(self.rank), self.vis_image)
+        #     cv2.waitKey(1)
 
         if args.print_images:
             fn = '{}/episodes/thread_{}/eps_{}/{}-{}-Vis-{}.png'.format(
@@ -603,8 +656,8 @@ class Agent_Helper:
             fn2 = '{}/episodes/thread_{}/eps_{}/{}-{}-Vis-{}.png'.format(
                 dump_dir, self.rank+1, self.episode_no,
                 self.rank, self.episode_no, self.timestep)
-            #if self.mask is not None:
-            #    self.save_semantic(self.mask.cpu().numpy(),fn2)
+            if self.mask is not None:
+               self.save_semantic(self.mask.cpu().numpy(),fn2)
 
 
 

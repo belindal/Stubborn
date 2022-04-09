@@ -5,6 +5,12 @@ import torch
 def get_args():
     parser = argparse.ArgumentParser(
         description='Stubborn')
+    
+    # For semantic exploration or detection
+    parser.add_argument('--use_semantics', action='store_true', default=False,
+                        help='do full semantic segmentation')
+    parser.add_argument('--use_lm', action='store_true', default=False,
+                        help='use LM priors to guide detection and policy')
 
     # General Arguments
     parser.add_argument('--seed', type=int, default=1,
