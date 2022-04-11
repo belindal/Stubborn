@@ -5,6 +5,7 @@ import numpy as np
 
 from agent.utils.model import get_grid, ChannelPool, Flatten, NNBase
 import agent.utils.depth_utils as du
+import warnings
 
 
 class Semantic_Mapping(nn.Module):
@@ -92,7 +93,6 @@ class Semantic_Mapping(nn.Module):
             obs[:, 4:, :, :]
         ).view(bs, c - 4, h // self.du_scale * w // self.du_scale)
 
-
         XYZ_cm_std = XYZ_cm_std.permute(0, 3, 1, 2)
         XYZ_cm_std = XYZ_cm_std.view(XYZ_cm_std.shape[0],
                                      XYZ_cm_std.shape[1],
@@ -156,6 +156,7 @@ class Semantic_Mapping(nn.Module):
 
             return pose
 
+        # breakpoint()
         current_poses = get_new_pose_batch(poses_last, corrected_pose)
         st_pose = current_poses.clone().detach()
 
@@ -168,8 +169,10 @@ class Semantic_Mapping(nn.Module):
         rot_mat, trans_mat = get_grid(st_pose, agent_view.size(),
                                       self.device)
 
-        rotated = F.grid_sample(agent_view, rot_mat, align_corners=True)
-        translated = F.grid_sample(rotated, trans_mat, align_corners=True)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            rotated = F.grid_sample(agent_view, rot_mat, align_corners=True)
+            translated = F.grid_sample(rotated, trans_mat, align_corners=True)
         # rotate and translate (into top-down map(?)) based on new estimate (1,1,9,w,h)
         t2 = translated.unsqueeze(1)
 
@@ -210,7 +213,6 @@ class Semantic_Mapping(nn.Module):
                         angle += 6.28
                     agent_states.local_grid[2,r2,c2] = torch.min(agent_states.local_grid[2,r2,c2],angle)
                     agent_states.local_grid[3,r2,c2] = torch.max(agent_states.local_grid[3,r2,c2],angle)
-
 
         map_pred, _ = torch.max(maps2, 1)  # [1,9,w,h]
         agent_states.local_grid[5,:,:] = torch.clone(nn.MaxPool2d(self.args.grid_resolution)(

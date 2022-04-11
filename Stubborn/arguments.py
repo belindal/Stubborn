@@ -11,6 +11,8 @@ def get_args():
                         help='do full semantic segmentation')
     parser.add_argument('--use_lm', action='store_true', default=False,
                         help='use LM priors to guide detection and policy')
+    parser.add_argument('--do_error_analysis', type=str, default=None,
+                        help='set to record error analysis to file / visualize errors')
 
     # General Arguments
     parser.add_argument('--seed', type=int, default=1,

@@ -394,25 +394,41 @@ class Agent_State:
         max_ratio = -1
 
         #max score
-        for i in range(len(ind2[0])):
-            n,m = ind2[0][i],ind2[1][i]
-            if self.local_grid[5,n,m] > max_score:
-                max_score = self.local_grid[5,n,m]
-                ans["score"] = self.local_grid[:,n,m].cpu().numpy()
+        scores = self.local_grid[5,ind2[0],ind2[1]]
+        max_score_i = scores.argmax()
+        max_score = scores[max_score_i]
+        n, m = ind2[0][max_score_i], ind2[1][max_score_i]
+        ans["score"] = self.local_grid[:,n,m].cpu().numpy()
+        # TODO above should be semantically equivalent to this:
+        # for i in range(len(ind2[0])):
+        #     n,m = ind2[0][i],ind2[1][i]
+        #     if self.local_grid[5,n,m] > max_score:
+        #         max_score = self.local_grid[5,n,m]
+        #         ans["score"] = self.local_grid[:,n,m].cpu().numpy()
 
         #highest cumu
-        for i in range(len(ind2[0])):
-            n,m = ind2[0][i],ind2[1][i]
-            if self.local_grid[1,n,m] > max_cumu:
-                max_cumu = self.local_grid[1,n,m]
-                ans["cumu"] = self.local_grid[:,n,m].cpu().numpy()
+        cumus = self.local_grid[1,ind2[0],ind2[1]]
+        max_cumu_i = cumus.argmax()
+        max_cumu = cumus[max_cumu_i]
+        n, m = ind2[0][max_cumu_i], ind2[1][max_cumu_i]
+        ans["cumu"] = self.local_grid[:,n,m].cpu().numpy()
+        # for i in range(len(ind2[0])):
+        #     n,m = ind2[0][i],ind2[1][i]
+        #     if self.local_grid[1,n,m] > max_cumu:
+        #         max_cumu = self.local_grid[1,n,m]
+        #         ans["cumu"] = self.local_grid[:,n,m].cpu().numpy()
 
         #highest ratio
-        for i in range(len(ind2[0])):
-            n,m = ind2[0][i],ind2[1][i]
-            if self.local_grid[1,n,m]/self.local_grid[0,n,m] > max_ratio:
-                max_ratio = self.local_grid[1,n,m]/self.local_grid[0,n,m]
-                ans["ratio"] = self.local_grid[:,n,m].cpu().numpy()
+        ratios = self.local_grid[1,ind2[0],ind2[1]] / self.local_grid[0,ind2[0],ind2[1]]
+        max_ratio_i = ratios.argmax()
+        max_ratio = ratios[max_ratio_i]
+        n, m = ind2[0][max_ratio_i], ind2[1][max_ratio_i]
+        ans["ratio"] = self.local_grid[:,n,m].cpu().numpy()
+        # for i in range(len(ind2[0])):
+        #     n,m = ind2[0][i],ind2[1][i]
+        #     if self.local_grid[1,n,m]/self.local_grid[0,n,m] > max_ratio:
+        #         max_ratio = self.local_grid[1,n,m]/self.local_grid[0,n,m]
+        #         ans["ratio"] = self.local_grid[:,n,m].cpu().numpy()
         ans["total"] = {"score":float(max_score.cpu().numpy()),"cumu":float(max_cumu.cpu().numpy()),"ratio":float(max_ratio.cpu().numpy())}
         ans["suc"] = self.suc_gt_map(goalmap,self.local_map[self.gt_mask_channel,:,:].cpu().numpy()) if self.args.use_gt_mask else -1
         ans["step"] = self.step
@@ -433,7 +449,8 @@ class Agent_State:
 
     def upd_agent_state(self,obs,infos):
         """
-        Exploration
+        1. Use mapping module to transform into 3d map
+        2. Figure out if stuck or if we've found the goal, and if so, determine next long-term goa
         """
         args = self.args
         self.poses = torch.from_numpy(np.asarray(
@@ -464,7 +481,6 @@ class Agent_State:
                         stuck = False
                 if stuck:
                     self.stuck = True
-
 
         # TODO add semantic prediction here....
         # self.rednet(obs,) #TODO where to get depth from
@@ -540,7 +556,6 @@ class Agent_State:
         # now change to >= 0.85 on the single channel (channel 5)
         if self.args.only_explore == 0:
             max_score = torch.max(self.local_grid[5][self.local_grid[4] == 0])
-            # breakpoint()
             if max_score > self.score_threshold:
                 indices = torch.nonzero(self.local_grid[5] >= max_score)
                 self.cat_semantic_map.fill_(0.)

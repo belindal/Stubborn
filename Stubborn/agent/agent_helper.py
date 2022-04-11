@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import math
 from agent.utils.fmm_planner import FMMPlanner
 from agent.utils.rednet import SemanticPredRedNet
-from constants import color_palette, habitat_labels_r, mpcat40_labels
+from constants import color_palette, habitat_labels_r, mpcat40_labels, twentyone240
 import agent.utils.pose as pu
 import agent.utils.visualization as vu
 
@@ -163,16 +163,13 @@ class Agent_Helper:
 
         # Reset reward if new long-term goal
         self.timestep += 1
-        self.goal_name = planner_inputs['goal_name']
-        if self.args.visualize or self.args.print_images:
-            self.vis_image = vu.init_vis_image(self.goal_name, self.legend)
+        # self.goal_name = planner_inputs['goal_name']
+        # if self.args.visualize or self.args.print_images:
+        #     self.vis_image = vu.init_vis_image(self.goal_name, self.legend)
         if planner_inputs["new_goal"]:
             self.info["g_reward"] = 0
 
         action = self._plan(planner_inputs)
-
-        if self.args.visualize or self.args.print_images:
-            self._visualize(planner_inputs)
 
         if action >= 0:
 
@@ -195,6 +192,15 @@ class Agent_Helper:
 
         info['g_reward'] += rew
         info['full_segmentation'] = sem_seg_pred_full
+        all_present_objs = set()
+        if len(sem_seg_pred_full) < 30: objects = habitat_labels_r
+        else: objects = mpcat40_labels
+        for obj_label in range(len(objects)):  # label 0 is background
+            if obj_label == len(sem_seg_pred_full): break
+            if sem_seg_pred_full[obj_label].any():
+                # add a label
+                all_present_objs.add(objects[obj_label])
+        info['objs_in_view'] = all_present_objs
         return obs, info
 
 
@@ -495,7 +501,7 @@ class Agent_Helper:
 
         rednet_output, rednet_output_mask, rgb, depth = self.sem_pred_rednet.forward_rednet(rgb, depth)
         if self.args.print_images == 1:
-            rednet_output_vis = rednet_output.clone()
+            rednet_output_vis = rednet_output.clone().cpu().numpy()
             rednet_output_vis[rednet_output_vis<self.sem_pred_rednet.threshold_full] = 0  #TODO increase threshold(?)
             # rednet_output_vis_p = self.sem_pred_rednet.softmax(rednet_output_vis*10)
             # rednet_output_vis_p[rednet_output_vis_p < 0.95] = 0
@@ -509,6 +515,8 @@ class Agent_Helper:
         # else:
         #     full_semantic_pred_rednet = None
         semantic_pred_rednet = self.sem_pred_rednet.get_prediction_quick(rgb,depth,self.goal_cat,rednet_output=rednet_output.clone()).astype(np.float32)
+        if self.args.print_images == 1:
+            rednet_output_vis[twentyone240[self.goal_cat]] = semantic_pred_rednet[:,:,0]
         return semantic_pred_rednet, rednet_output_vis
 
     def save_semantic(self, img,fn):
@@ -545,7 +553,6 @@ class Agent_Helper:
         obs_sem = inputs['curr_obs_seg'][0]
         if self.args.use_semantics:
             # inputs['obs_full_seg'] = inputs['obs_full_seg'].transpose(2,0,1)
-            inputs['obs_full_seg'] = inputs['obs_full_seg'].cpu().numpy()
             obs_full_seg_vis = np.ones((inputs['obs_full_seg'].shape[1],inputs['obs_full_seg'].shape[2],3)) * 255
             colors = self.get_spaced_colors(inputs['obs_full_seg'].shape[0]-1)
             all_present_objs = {}
@@ -562,13 +569,13 @@ class Agent_Helper:
                 # else:
                 obs_full_seg_vis[inputs['obs_full_seg'][obj_label] > 0] = colors[obj_label-1]
 
-        if 'itself' in inputs.keys():
-            my_score = inputs['itself']
-            opp_cat = inputs['opp_cat']
-            opp_score = inputs['opp_score']
-            str = '{} {} {} {}'.format(self.goal_name, my_score, opp_cat,
-                                       opp_score)
-            self.vis_image = vu.init_vis_image(str, self.legend)
+        # if 'itself' in inputs.keys():
+        #     my_score = inputs['itself']
+        #     opp_cat = inputs['opp_cat']
+        #     opp_score = inputs['opp_score']
+        #     str = '{} {} {} {}'.format(self.goal_name, my_score, opp_cat,
+        #                                opp_score)
+        #     self.vis_image = vu.init_vis_image(str, self.legend)
 
 
         gx1, gx2, gy1, gy2 = int(gx1), int(gx2), int(gy1), int(gy2)
@@ -621,7 +628,7 @@ class Agent_Helper:
             # self.vis_image[550:, 670:1150] = legend(all_present_objs)
             for obj_idx, obj in enumerate(all_present_objs):
                 cv2.putText(self.vis_image, obj, 
-                    (690 + 150 * (obj_idx % 3), 550+20*(obj_idx // 3)), 
+                    (700 + 200 * (obj_idx % 3), 550+20*(obj_idx // 3)), 
                     cv2.FONT_HERSHEY_SIMPLEX, 
                     1,
                     all_present_objs[obj],
