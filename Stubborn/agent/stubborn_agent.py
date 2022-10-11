@@ -11,7 +11,10 @@ import copy
 from agent.agent_state import Agent_State
 from agent.agent_helper import Agent_Helper
 from agent.utils.object_identification import get_prediction
-
+from habitat.utils.geometry_utils import (
+    quaternion_from_coeff,
+    quaternion_rotate_vector,
+)
 
 
 class StubbornAgent(habitat.Agent):
@@ -43,7 +46,7 @@ class StubbornAgent(habitat.Agent):
     def act(self, observations):
         self.timestep += 1
         # if passed the step limit and we haven't found the goal, stop.
-        if self.timestep > self.args.timestep_limit and self.agent_states.found_goal == False:
+        if self.timestep > self.args.timestep_limit: #and self.agent_states.found_goal == False:
             return {'action': 0}
         if self.timestep > 495:
             return {'action': 0}
@@ -66,7 +69,6 @@ class StubbornAgent(habitat.Agent):
         if self.first_obs:
             self.agent_states.init_with_obs(obs,info)
             self.first_obs = False
-
 
         planner_inputs = self.agent_states.upd_agent_state(obs,info)
         # now get action
@@ -91,6 +93,20 @@ class StubbornAgent(habitat.Agent):
         info = {}
         dx, dy, do = self.get_pose_change(obs)
         info['sensor_pose'] = [dx, dy, do]
+        info['gt_goal_positions'] = obs['gt_goal_positions']
+        info['gt_goal_names'] = obs['gt_goal_names']
+        info["gps"] = obs["gps"]
+
+        gt_goal_positions = []
+        for g, goal_pos in enumerate(info["gt_goal_positions"]):
+            nap2 = goal_pos[0]
+            nap0 = -goal_pos[1]
+            x = nap2
+            y = nap0
+            # o = obs['compass']
+            info["gt_goal_positions"][g][0] = x
+            info["gt_goal_positions"][g][1] = y
+
         # set goal
         return info
 

@@ -171,7 +171,7 @@ class Agent_Helper:
 
         action = self._plan(planner_inputs)
 
-        if self.args.visualize or self.args.print_images:
+        if self.args.visualize or self.args.print_images and self.timestep % 5 == 0:
             self._visualize(planner_inputs)
 
         if action >= 0:
@@ -587,12 +587,12 @@ class Agent_Helper:
         color = (int(color_palette[11] * 255),
                  int(color_palette[10] * 255),
                  int(color_palette[9] * 255))
-        #cv2.drawContours(self.vis_image, [agent_arrow], 0, color, -1) # TODO: change back
+        cv2.drawContours(self.vis_image, [agent_arrow], 0, color, -1) # TODO: change back
 
-        if args.visualize:
-            # Displaying the image
-            cv2.imshow("Thread {}".format(self.rank), self.vis_image)
-            cv2.waitKey(1)
+        # if args.visualize:
+        #     # Displaying the image
+        #     cv2.imshow("Thread {}".format(self.rank), self.vis_image)
+        #     cv2.waitKey(1)
 
         if args.print_images:
             fn = '{}/episodes/thread_{}/eps_{}/{}-{}-Vis-{}.png'.format(

@@ -1,4 +1,11 @@
 # Stubborn: A Strong Baseline for Habitat ObjectNav Challenge
+
+```bash
+env CUDA_VISIBLE_DEVICES=9
+export CHALLENGE_CONFIG_FILE=configs/challenge_objectnav2022.local.rgbd.yaml
+python Stubborn/eval.py --timestep_limit 451 --evaluation local
+```
+
 This is the implementation of the Stubborn Agent (yuumi_the_magic_cat on the Habitat Challenge Leaderboard).
 It uses relatively simple strategies but achieved a strong result (0.237 success rate and 0.098 SPL).
 We release the code here to help the Robotic community by providing them with a strong baseline that they can both compete against or work from.

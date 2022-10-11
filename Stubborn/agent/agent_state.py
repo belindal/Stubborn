@@ -63,9 +63,11 @@ class Agent_State:
         # The rest of the dimensions of self.full_map are not used in the final implementation
         self.full_map = torch.zeros(self.nc, self.full_w, self.full_h).float().to(
             self.device)
+        self.full_objs_map = torch.zeros(1, self.full_w, self.full_h).float().to(self.device)
 
         self.local_map = torch.zeros(self.nc, self.local_w,
                                 self.local_h).float().to(self.device)
+        self.local_objs_map = torch.zeros(1, self.local_w, self.local_h).float().to(self.device)
         self.global_goal_loc = torch.zeros(self.full_w,self.full_h)
         self.global_goal_index = (-1,-1)
 
@@ -180,13 +182,22 @@ class Agent_State:
         loc_c - 1:loc_c + 2] = 1.
 
         self.global_goals = [[int(0.1 * self.local_w), int(0.1 * self.local_h)]]
+        # sort by distance
+        # infos["gt_goal_positions"].sort(key=lambda pos: pos[0]**2 + pos[1]**2)
+        # assert infos["gps"] == self.locs
+        self.global_goals = [[
+            int((y + r) * 100.0 / self.args.map_resolution), int((x + c) * 100.0 / self.args.map_resolution)
+        ] for x,y in infos["gt_goal_positions"]]
+        # """
         self.global_goals = [[min(x, int(self.local_w - 1)), min(y, int(self.local_h - 1))]
                         for x, y in self.global_goals]
 
         self.goal_maps = np.zeros((self.local_w, self.local_h))
 
-
         self.goal_maps[self.global_goals[0][0], self.global_goals[0][1]] = 1
+        self.full_objs_map[0, self.lmb[0]:self.lmb[1], self.lmb[2]:self.lmb[3]] = torch.tensor(self.goal_maps).to(self.full_map.device)
+        self.local_objs_map = self.full_objs_map[:, self.lmb[0]:self.lmb[1], self.lmb[2]:self.lmb[3]]
+        print(f"Plotted goal position: {self.global_goals[0]}")
 
 
         p_input = {}
@@ -251,8 +262,7 @@ class Agent_State:
             self.local_grid[3].fill_(0.)
             self.local_grid[4:6].fill_(0.)
 
-
-
+        # identify center of map
         self.full_pose[:2] = self.args.map_size_cm / 100.0 / 2.0
 
         locs = self.full_pose.cpu().numpy()
@@ -494,6 +504,7 @@ class Agent_State:
                               torch.from_numpy(self.origins).to(self.device).float()
             self.local_grid = torch.clone(self.grid[:, self.lmb[0] // res:self.lmb[1] // res,
                                           self.lmb[2] // res: self.lmb[3] // res])
+            self.local_objs_map = self.full_objs_map[:, self.lmb[0]:self.lmb[1], self.lmb[2]:self.lmb[3]]
 
 
             locs = self.local_pose.cpu().numpy()
@@ -501,12 +512,17 @@ class Agent_State:
                 self.global_goal_rotation_id = (self.global_goal_rotation_id + 1)%4
                 self.global_goal_preset = self.global_goal_rotation[self.global_goal_rotation_id]
                 self.hard_goal = False
+            """ TODO uncomment
             self.global_goals = [[int(self.global_goal_preset[0] * self.local_w),
                              int(self.global_goal_preset[1] * self.local_h)]
                             ]
             self.global_goals = [[min(x, int(self.local_w - 1)),
                              min(y, int(self.local_h - 1))]
                             for x, y in self.global_goals]
+            """
+            if (self.local_objs_map[0] == 0).all():
+                self.global_goals = self.full_objs_map[0].nonzero() - torch.tensor([self.lmb[0], self.lmb[2]]).to(self.full_objs_map.device)
+                self.local_goals = [[min(x, int(self.local_w - 1)), min(y, int(self.local_h - 1))] for x, y in self.global_goals]
 
 
         # ------------------------------------------------------------------
@@ -514,10 +530,10 @@ class Agent_State:
         # ------------------------------------------------------------------
         # Update long-term goal if target object is found
         found_goal = 0
-        goal_maps = np.zeros((self.local_w, self.local_h))
-
-
-        goal_maps[self.global_goals[0][0], self.global_goals[0][1]] = 1
+        goal_maps = self.local_objs_map[0].cpu().numpy()
+        if (self.local_objs_map[0] == 0).all():
+            goal_maps = np.zeros((self.local_w, self.local_h))
+            goal_maps[self.local_goals[0][0], self.local_goals[0][1]] = 1
 
         maxi = 0.0
         maxc = -1
@@ -548,7 +564,9 @@ class Agent_State:
                     cat_semantic_scores = self.cat_semantic_map.cpu().numpy()
                     cat_semantic_scores[
                         cat_semantic_scores < self.score_threshold - 0.01] = 0.
-                    goal_maps = cat_semantic_scores
+                    # """ TODO UNCOMMENT
+                    # goal_maps = cat_semantic_scores
+                    # """"
 
 
 

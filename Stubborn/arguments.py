@@ -6,6 +6,9 @@ def get_args():
     parser = argparse.ArgumentParser(
         description='Stubborn')
 
+    parser.add_argument('--do_error_analysis', action='store_true', default=False,
+                        help='set to record error analysis to file / visualize errors')
+
     # General Arguments
     parser.add_argument('--seed', type=int, default=1,
                         help='random seed (default: 1)')
@@ -99,6 +102,10 @@ def get_args():
     parser.add_argument('--detect_stuck',type = int, default = 0)
     parser.add_argument('--only_explore',type = int, default = 0)
     parser.add_argument('--exclude_current_scene',type = int, default = 0)
+
+    # parser.add_argument(
+    #     "--opts", default=None, type=str, help="Modify config options from command line, given as json list",
+    # )
 
     # parse arguments
     args = parser.parse_args()
