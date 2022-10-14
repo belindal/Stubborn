@@ -185,6 +185,7 @@ class Agent_State:
         # sort by distance
         # infos["gt_goal_positions"].sort(key=lambda pos: pos[0]**2 + pos[1]**2)
         # assert infos["gps"] == self.locs
+        # add (x,y) relative to to (r (starting row), c (starting column))
         self.global_goals = [[
             int((y + r) * 100.0 / self.args.map_resolution), int((x + c) * 100.0 / self.args.map_resolution)
         ] for x,y in infos["gt_goal_positions"]]
@@ -197,7 +198,7 @@ class Agent_State:
         self.goal_maps[self.global_goals[0][0], self.global_goals[0][1]] = 1
         self.full_objs_map[0, self.lmb[0]:self.lmb[1], self.lmb[2]:self.lmb[3]] = torch.tensor(self.goal_maps).to(self.full_map.device)
         self.local_objs_map = self.full_objs_map[:, self.lmb[0]:self.lmb[1], self.lmb[2]:self.lmb[3]]
-        print(f"Plotted goal position: {self.global_goals[0]}")
+        # self.starting_position_fullmap = [self.lmb[0] + loc_r, self.lmb[2] + loc_c]
 
 
         p_input = {}
@@ -262,7 +263,8 @@ class Agent_State:
             self.local_grid[3].fill_(0.)
             self.local_grid[4:6].fill_(0.)
 
-        # identify center of map
+        # position on full map (using internal frame of reference)
+        # identify center of map = starting position of agent
         self.full_pose[:2] = self.args.map_size_cm / 100.0 / 2.0
 
         locs = self.full_pose.cpu().numpy()
@@ -279,12 +281,14 @@ class Agent_State:
                                                  (self.full_w, self.full_h))
 
         self.planner_pose_inputs[3:] = self.lmb
+        # *INTERNAL MAP* origin (on gps frame of reference)
         self.origins = np.array([self.lmb[2] * args.map_resolution / 100.0,
                         self.lmb[0] * args.map_resolution / 100.0, 0.])
 
         self.local_map = self.full_map[:,
                          self.lmb[0]:self.lmb[1],
                          self.lmb[2]:self.lmb[3]]
+        # position on local map (using internal frame of reference)
         self.local_pose = self.full_pose - \
                           torch.from_numpy(self.origins).to(self.device).float()
 

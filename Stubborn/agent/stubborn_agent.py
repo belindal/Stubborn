@@ -15,7 +15,7 @@ from habitat.utils.geometry_utils import (
     quaternion_from_coeff,
     quaternion_rotate_vector,
 )
-
+from habitat.core.benchmark import convert_to_gps_coords, convert_to_world_coords
 
 class StubbornAgent(habitat.Agent):
     def __init__(self,args,task_config: habitat.Config):
@@ -76,7 +76,7 @@ class StubbornAgent(habitat.Agent):
         # For data collection purpose, collect data to train the object detection module
         if self.args.no_stop == 1 and action['action'] == 0:
             self.agent_states.clear_goal_and_set_gt_map(planner_inputs['goal'])
-            return {'action':1}
+            return {'action': 1}
         if action['action'] == 0:
             item = self.agent_states.goal_record(planner_inputs['goal'])
             stp = get_prediction(item,goal)
