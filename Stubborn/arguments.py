@@ -8,6 +8,7 @@ def get_args():
 
     parser.add_argument('--do_error_analysis', action='store_true', default=False,
                         help='set to record error analysis to file / visualize errors')
+    parser.add_argument('--set_goal_to_lmprior_room', action='store_true', default=False)
 
     # General Arguments
     parser.add_argument('--seed', type=int, default=1,

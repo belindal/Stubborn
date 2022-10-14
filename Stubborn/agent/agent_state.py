@@ -63,11 +63,11 @@ class Agent_State:
         # The rest of the dimensions of self.full_map are not used in the final implementation
         self.full_map = torch.zeros(self.nc, self.full_w, self.full_h).float().to(
             self.device)
-        self.full_objs_map = torch.zeros(1, self.full_w, self.full_h).float().to(self.device)
+        self.full_currgoal_map = torch.zeros(1, self.full_w, self.full_h).float().to(self.device)
 
         self.local_map = torch.zeros(self.nc, self.local_w,
                                 self.local_h).float().to(self.device)
-        self.local_objs_map = torch.zeros(1, self.local_w, self.local_h).float().to(self.device)
+        self.local_currgoal_map = torch.zeros(1, self.local_w, self.local_h).float().to(self.device)
         self.global_goal_loc = torch.zeros(self.full_w,self.full_h)
         self.global_goal_index = (-1,-1)
 
@@ -105,6 +105,8 @@ class Agent_State:
         self.stuck = False
         if args.detect_stuck == 1:
             self.pos_record = []
+        self.local_pose_at_start = None
+        self.global_goals = None
 
 
 
@@ -124,8 +126,10 @@ class Agent_State:
         self.score_threshold = 0.85
         self.init_map_and_pose()
         self.stuck = False
+        self.global_goals = None
         if self.args.detect_stuck == 1:
             self.pos_record = []
+        self.local_pose_at_start = None
 
 
     def save_conf_stat(self,suc,epi_length, epi_ID,gt_found = False,step = -1):
@@ -181,26 +185,16 @@ class Agent_State:
         self.local_map[2:4, loc_r - 1:loc_r + 2,
         loc_c - 1:loc_c + 2] = 1.
 
-        self.global_goals = [[int(0.1 * self.local_w), int(0.1 * self.local_h)]]
-        # sort by distance
-        # infos["gt_goal_positions"].sort(key=lambda pos: pos[0]**2 + pos[1]**2)
-        # assert infos["gps"] == self.locs
-        # add (x,y) relative to to (r (starting row), c (starting column))
-        self.global_goals = [[
-            int((y + r) * 100.0 / self.args.map_resolution), int((x + c) * 100.0 / self.args.map_resolution)
-        ] for x,y in infos["gt_goal_positions"]]
-        # """
-        self.global_goals = [[min(x, int(self.local_w - 1)), min(y, int(self.local_h - 1))]
-                        for x, y in self.global_goals]
+        self.set_expgoal(obs, infos)
+        # if self.args.set_goal_to_lmprior_room and infos["expgoal_room_center"] is not None:
+        # else:
+        #     self.global_goals = [[int(0.1 * self.local_w), int(0.1 * self.local_h)]]
+        #     self.global_goals = [[min(x, int(self.local_w - 1)), min(y, int(self.local_h - 1))]
+        #                          for x, y in self.global_goals]
 
         self.goal_maps = np.zeros((self.local_w, self.local_h))
-
-        self.goal_maps[self.global_goals[0][0], self.global_goals[0][1]] = 1
-        self.full_objs_map[0, self.lmb[0]:self.lmb[1], self.lmb[2]:self.lmb[3]] = torch.tensor(self.goal_maps).to(self.full_map.device)
-        self.local_objs_map = self.full_objs_map[:, self.lmb[0]:self.lmb[1], self.lmb[2]:self.lmb[3]]
+        self.goal_maps[self.local_goals[0][0], self.local_goals[0][1]] = 1
         # self.starting_position_fullmap = [self.lmb[0] + loc_r, self.lmb[2] + loc_c]
-
-
         p_input = {}
 
         p_input['map_pred'] = self.local_map[0, :, :].cpu().numpy()
@@ -220,6 +214,48 @@ class Agent_State:
 
 
         torch.set_grad_enabled(False)
+    
+    def clear_expgoal(self):
+        # clear room goal
+        self.full_currgoal_map = torch.zeros(1, self.full_w, self.full_h).float().to(self.device)
+        self.local_currgoal_map = self.full_currgoal_map[:, self.lmb[0]:self.lmb[1], self.lmb[2]:self.lmb[3]]
+    
+    def set_expgoal(self, obs, infos):
+        if self.args.set_goal_to_lmprior_room and infos["expgoal_room_center"] is not None:
+            # sort by distance
+            # infos["gt_goal_positions"].sort(key=lambda pos: pos[0]**2 + pos[1]**2)
+            # assert infos["gps"] == self.locs
+            # add (x,y) relative to to (r (starting row), c (starting column))
+            # self.global_goals = [[
+            #     int((y + r) * 100.0 / self.args.map_resolution), int((x + c) * 100.0 / self.args.map_resolution)
+            # ] for x,y in infos["goal_rooms"]]
+
+            # goal changed
+            # new_goal = [
+            #     int((infos["expgoal_room_center"][1] + self.local_pose_at_start[1]) * 100.0 / self.args.map_resolution) + self.lmb[0],
+            #     int((infos["expgoal_room_center"][0] + self.local_pose_at_start[0]) * 100.0 / self.args.map_resolution) + self.lmb[2],
+            # ]
+            # should be equivalent to ^^ at start (when lmb has not changed)
+            new_goal = [
+                int((infos["expgoal_room_center"][1] + self.full_pose_at_start[1]) * 100.0 / self.args.map_resolution),
+                int((infos["expgoal_room_center"][0] + self.full_pose_at_start[0]) * 100.0 / self.args.map_resolution),
+            ]
+            if self.global_goals is None or self.global_goals[0] != new_goal:
+                self.clear_expgoal()
+                self.global_goals = [new_goal]
+                self.full_currgoal_map[0, self.global_goals[0][0], self.global_goals[0][1]] = 1
+            self.local_currgoal_map = self.full_currgoal_map[:, self.lmb[0]:self.lmb[1], self.lmb[2]:self.lmb[3]]
+            self.local_goals = [[self.global_goals[0][0] - self.lmb[0], self.global_goals[0][1] - self.lmb[2]]]
+            if not self.local_currgoal_map[0].any():
+                # in new view, goal is out of scope
+                self.local_goals = [[min(x, int(self.local_w - 1)), min(y, int(self.local_h - 1))] for x, y in self.local_goals]
+                self.local_currgoal_map[0, self.local_goals[0][0], self.local_goals[0][1]] = 1
+            # self.global_goals = self.full_currgoal_map[0].nonzero()
+        else:
+            self.global_goals = [[int(0.1 * self.local_w), int(0.1 * self.local_h)]]
+            self.global_goals = [[min(x, int(self.local_w - 1)), min(y, int(self.local_h - 1))]
+                                 for x, y in self.global_goals]
+            self.local_goals = self.global_goals
 
 
     def get_local_map_boundaries(self, agent_loc, local_sizes, full_sizes):
@@ -291,6 +327,8 @@ class Agent_State:
         # position on local map (using internal frame of reference)
         self.local_pose = self.full_pose - \
                           torch.from_numpy(self.origins).to(self.device).float()
+        self.local_pose_at_start = self.local_pose.clone()
+        self.full_pose_at_start = self.full_pose.clone()
 
     def set_hard_goal(self):
         self.hard_goal = True
@@ -450,7 +488,10 @@ class Agent_State:
         self.poses = torch.from_numpy(np.asarray(
             infos['sensor_pose'] )
         ).float().to(self.device)
-
+        # set goal based on obs
+        if self.args.set_goal_to_lmprior_room and infos["expgoal_room_center"] is not None:
+            self.set_expgoal(obs, infos)
+        # set local map based on obs
         _, self.local_map, _, self.local_pose = \
             self.sem_map_module(obs, self.poses, self.local_map, self.local_pose,self)
 
@@ -508,7 +549,6 @@ class Agent_State:
                               torch.from_numpy(self.origins).to(self.device).float()
             self.local_grid = torch.clone(self.grid[:, self.lmb[0] // res:self.lmb[1] // res,
                                           self.lmb[2] // res: self.lmb[3] // res])
-            self.local_objs_map = self.full_objs_map[:, self.lmb[0]:self.lmb[1], self.lmb[2]:self.lmb[3]]
 
 
             locs = self.local_pose.cpu().numpy()
@@ -516,17 +556,22 @@ class Agent_State:
                 self.global_goal_rotation_id = (self.global_goal_rotation_id + 1)%4
                 self.global_goal_preset = self.global_goal_rotation[self.global_goal_rotation_id]
                 self.hard_goal = False
-            """ TODO uncomment
-            self.global_goals = [[int(self.global_goal_preset[0] * self.local_w),
-                             int(self.global_goal_preset[1] * self.local_h)]
-                            ]
-            self.global_goals = [[min(x, int(self.local_w - 1)),
-                             min(y, int(self.local_h - 1))]
-                            for x, y in self.global_goals]
-            """
-            if (self.local_objs_map[0] == 0).all():
-                self.global_goals = self.full_objs_map[0].nonzero() - torch.tensor([self.lmb[0], self.lmb[2]]).to(self.full_objs_map.device)
-                self.local_goals = [[min(x, int(self.local_w - 1)), min(y, int(self.local_h - 1))] for x, y in self.global_goals]
+            if not self.args.set_goal_to_lmprior_room:
+                self.global_goals = [[int(self.global_goal_preset[0] * self.local_w),
+                                int(self.global_goal_preset[1] * self.local_h)]
+                                ]
+                self.global_goals = [[min(x, int(self.local_w - 1)),
+                                min(y, int(self.local_h - 1))]
+                                for x, y in self.global_goals]
+            else:
+                # update local goal map based on new map boundaries
+                self.set_expgoal(obs, infos)
+                # # continue to set goal to where it originally was (unless overriden below by target object found)
+                # if (self.local_currgoal_map[0] == 0).all():
+                #     # in new view, goal is out of scope
+                #     self.local_goals = torch.tensor([self.global_goals[0][0] - self.lmb[0], self.global_goals[0][1] - self.lmb[2]]).to(self.full_currgoal_map.device)
+                #     self.local_goals = [[min(x, int(self.local_w - 1)), min(y, int(self.local_h - 1))] for x, y in self.local_goals]
+                #     self.local_currgoal_map[0, self.local_goals[0][0], self.local_goals[0][1]] = 1
 
 
         # ------------------------------------------------------------------
@@ -534,10 +579,16 @@ class Agent_State:
         # ------------------------------------------------------------------
         # Update long-term goal if target object is found
         found_goal = 0
-        goal_maps = self.local_objs_map[0].cpu().numpy()
-        if (self.local_objs_map[0] == 0).all():
-            goal_maps = np.zeros((self.local_w, self.local_h))
+        goal_maps = np.zeros((self.local_w, self.local_h))
+        if not self.args.set_goal_to_lmprior_room:
+            # set to globa_goal for now, is changed below if goal obj detected in visualization
+            goal_maps[self.global_goals[0][0], self.global_goals[0][1]] = 1
+        elif infos["expgoal_room_center"] is None:
             goal_maps[self.local_goals[0][0], self.local_goals[0][1]] = 1
+        else:
+            goal_maps = self.local_currgoal_map[0].cpu().numpy()
+        if not goal_maps.any():
+            breakpoint()
 
         maxi = 0.0
         maxc = -1
@@ -568,11 +619,7 @@ class Agent_State:
                     cat_semantic_scores = self.cat_semantic_map.cpu().numpy()
                     cat_semantic_scores[
                         cat_semantic_scores < self.score_threshold - 0.01] = 0.
-                    # """ TODO UNCOMMENT
-                    # goal_maps = cat_semantic_scores
-                    # """"
-
-
+                    goal_maps = cat_semantic_scores
 
         # ------------------------------------------------------------------
 

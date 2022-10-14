@@ -84,6 +84,15 @@ whitelist_map = {
     16:3
 }
 
+goal_labels = {
+    0: "chair",
+    1: "bed",
+    2: "plant",
+    3: "toilet",
+    4: "tv_monitor",
+    5: "sofa",
+}
+
 habitat_labels_r = {
             0:'background',
             1:'chair',

@@ -6,7 +6,7 @@ import torch
 from arguments import get_args
 import numpy as np
 import agent.utils.pose as pu
-from constants import coco_categories, hab2coco, hab2name, habitat_labels_r, fourty221, fourty221_ori, habitat_goal_label_to_similar_coco
+from constants import coco_categories, hab2coco, hab2name, habitat_labels, habitat_labels_r, fourty221, fourty221_ori, habitat_goal_label_to_similar_coco, goal_labels
 import copy
 from agent.agent_state import Agent_State
 from agent.agent_helper import Agent_Helper
@@ -34,6 +34,11 @@ class StubbornAgent(habitat.Agent):
         # towel tv shower gym clothes
         # use a lower confidence score threshold for those categories
         self.low_score_categories = {13,14,15,19,21}
+        self.visited_rooms = set()
+        self.expgoal_room = None
+        self.expgoal_room_bb = None
+
+
     def reset(self):
         self.agent_helper.reset()
         self.agent_states.reset()
@@ -42,17 +47,39 @@ class StubbornAgent(habitat.Agent):
         self.step = 0
         self.timestep = 0
         self.total_episodes += 1
+        self.visited_rooms = set()
+        self.expgoal_room = None
+        self.expgoal_room_bb = None
+    
+    def compute_gps_distance(self, pos1, pos2):
+        return ((pos1 - pos2)**2).sum()
+
+    def agent_seen_all_objs_in_curr_room(self, observations):
+        # proxy: close enough to vicinity of room, or agent is stuck
+        return self.compute_gps_distance(
+            observations['gps'],
+            convert_to_gps_coords(self.expgoal_room_bb.mean(), observations['start']['position'], observations['start']['rotation']),
+        ) < 0.1
+
+    def agent_stuck(self):
+        return self.args.detect_stuck and self.agent_states.stuck
 
     def act(self, observations):
         self.timestep += 1
         # if passed the step limit and we haven't found the goal, stop.
-        if self.timestep > self.args.timestep_limit: #and self.agent_states.found_goal == False:
+        if self.timestep > self.args.timestep_limit and self.agent_states.found_goal == False:
             return {'action': 0}
         if self.timestep > 495:
             return {'action': 0}
+        if self.args.set_goal_to_lmprior_room:
+            # if saw all objects in goal room, or agent is stuck; and haven't found goal, reset goal room.
+            if self.expgoal_room is not None and (self.agent_seen_all_objs_in_curr_room(observations) or self.agent_stuck()) and not self.agent_states.found_goal == False:
+                self.visited_rooms.add(self.expgoal_room)
+                self.agent_states.clear_expgoal()
+                self.expgoal_room = None
         #get first preprocess
-        goal = observations['objectgoal']
-        goal = goal[0]+1
+        goal = habitat_labels[goal_labels[observations['objectgoal'].item()]]
+        # goal = goal[0]+1
         if goal in self.low_score_categories:
             self.agent_states.score_threshold = self.low_score_threshold
 
@@ -93,37 +120,48 @@ class StubbornAgent(habitat.Agent):
         info = {}
         dx, dy, do = self.get_pose_change(obs)
         info['sensor_pose'] = [dx, dy, do]
-        info['gt_goal_positions'] = obs['gt_goal_positions']
-        info['gt_goal_names'] = obs['gt_goal_names']
+        info['gt_goal_name'] = obs['gt_goal_name']
         info["gps"] = obs["gps"]
 
         gt_goal_positions = []
-        for g, goal_pos in enumerate(info["gt_goal_positions"]):
-            nap2 = goal_pos[0]
-            nap0 = -goal_pos[1]
-            x = nap2
-            y = nap0
-            # o = obs['compass']
-            info["gt_goal_positions"][g][0] = x
-            info["gt_goal_positions"][g][1] = y
+        for g, goal_pos in enumerate(obs['gt_goal_positions']):
+            goal_pos_gps = convert_to_gps_coords(goal_pos, obs['start']['position'], obs['start']['rotation'])
+            x,y = self.get_sim_location(goal_pos_gps)
+            gt_goal_positions.append([x,y])
+        info['gt_goal_positions'] = gt_goal_positions
+
+        if self.args.set_goal_to_lmprior_room:
+            if self.expgoal_room is None:
+                possible_goal_rooms = [goal_room for goal_room in obs['goal_rooms'] if goal_room not in self.visited_rooms]
+                if len(possible_goal_rooms) == 0:
+                    info['expgoal_room_center'] = None
+                else:
+                    self.expgoal_room = possible_goal_rooms[0]
+                    self.expgoal_room_bb = obs['room_id_to_aabb'][self.expgoal_room]
+            if self.expgoal_room is not None:
+                goal_room_gps = convert_to_gps_coords(self.expgoal_room_bb.mean(-1), obs['start']['position'], obs['start']['rotation'])
+                x,y = self.get_sim_location(goal_room_gps)
+                info['expgoal_room_center'] = (x,y)
 
         # set goal
         return info
 
-    def get_sim_location(self,obs):
-        """Returns x, y, o pose of the agent in the Habitat simulator."""
-
-        nap2 = obs['gps'][0]
-        nap0 = -obs['gps'][1]
+    def get_sim_location(self, gps_coords, compass=None):
+        """Returns x, y, o position in internal Stubborn map given gps coordinates."""
+        nap2 = gps_coords[0]
+        nap0 = -gps_coords[1]
         x = nap2
         y = nap0
-        o = obs['compass']
-        if o > np.pi:
-            o -= 2 * np.pi
-        return x, y, o
+        if compass is None:
+            return x, y
+        else:
+            o = compass
+            if o > np.pi:
+                o -= 2 * np.pi
+            return x, y, o
 
     def get_pose_change(self,obs):
-        curr_sim_pose = self.get_sim_location(obs)
+        curr_sim_pose = self.get_sim_location(obs['gps'], obs['compass'])
         if self.last_sim_location is not None:
             dx, dy, do = pu.get_rel_pose_change(
                 curr_sim_pose, self.last_sim_location)
