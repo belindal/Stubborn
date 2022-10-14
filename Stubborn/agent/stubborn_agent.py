@@ -37,6 +37,8 @@ class StubbornAgent(habitat.Agent):
         self.visited_rooms = set()
         self.expgoal_room = None
         self.expgoal_room_bb = None
+        # self.room_to_bbs = {}
+        self.num_steps_in_each_room = {}
 
 
     def reset(self):
@@ -50,16 +52,29 @@ class StubbornAgent(habitat.Agent):
         self.visited_rooms = set()
         self.expgoal_room = None
         self.expgoal_room_bb = None
+        # self.room_to_bbs = {}
+        self.num_steps_in_each_room = {}
     
     def compute_gps_distance(self, pos1, pos2):
-        return ((pos1 - pos2)**2).sum()
+        return ((pos1 - pos2)**2).sum()**(1/2)
 
     def agent_seen_all_objs_in_curr_room(self, observations):
         # proxy: close enough to vicinity of room, or agent is stuck
-        return self.compute_gps_distance(
-            observations['gps'],
-            convert_to_gps_coords(self.expgoal_room_bb.mean(), observations['start']['position'], observations['start']['rotation']),
-        ) < 0.1
+        room_center = convert_to_gps_coords(self.expgoal_room_bb.mean(-1), observations['start']['position'], observations['start']['rotation'])
+        distance = self.compute_gps_distance(
+            observations['gps'], room_center,
+        )
+        steps_in_expgoal_room = self.num_steps_in_each_room.get(self.expgoal_room,0)
+        return distance < 0.75 or self.num_steps_in_each_room.get(self.expgoal_room,0) > 50
+    
+    def get_curr_room(self, observations):
+        for room in observations['room_id_to_aabb']:
+            room_bb = observations['room_id_to_aabb'][room]
+            if (observations['self_abs_position'] >= room_bb[:,0]).all() and (observations['self_abs_position'] <= room_bb[:,1]).all():
+                # in room
+                return room
+        return None
+
 
     def agent_stuck(self):
         return self.args.detect_stuck and self.agent_states.stuck
@@ -67,16 +82,19 @@ class StubbornAgent(habitat.Agent):
     def act(self, observations):
         self.timestep += 1
         # if passed the step limit and we haven't found the goal, stop.
-        if self.timestep > self.args.timestep_limit and self.agent_states.found_goal == False:
-            return {'action': 0}
+        if self.timestep > self.args.timestep_limit and not self.agent_states.found_goal:
+            return {'action': 0, 'stop_reason': 'timeout'}
         if self.timestep > 495:
-            return {'action': 0}
-        if self.args.set_goal_to_lmprior_room:
+            return {'action': 0, 'stop_reason': 'timeout'}
+        if self.agent_stuck():
+            return {'action': 0, 'stop_reason': 'stuck'}
+        if self.args.explore_rooms:
             # if saw all objects in goal room, or agent is stuck; and haven't found goal, reset goal room.
-            if self.expgoal_room is not None and (self.agent_seen_all_objs_in_curr_room(observations) or self.agent_stuck()) and not self.agent_states.found_goal == False:
-                self.visited_rooms.add(self.expgoal_room)
-                self.agent_states.clear_expgoal()
-                self.expgoal_room = None
+            if self.expgoal_room is not None:
+                if (self.agent_seen_all_objs_in_curr_room(observations) or self.agent_stuck()) and not self.agent_states.found_goal:
+                    self.visited_rooms.add(self.expgoal_room)
+                    self.agent_states.clear_expgoal()
+                    self.expgoal_room = None
         #get first preprocess
         goal = habitat_labels[goal_labels[observations['objectgoal'].item()]]
         # goal = goal[0]+1
@@ -84,6 +102,12 @@ class StubbornAgent(habitat.Agent):
             self.agent_states.score_threshold = self.low_score_threshold
 
         info = self.get_info(observations)
+        if self.args.explore_rooms:
+            curr_room = self.get_curr_room(observations)
+            if curr_room is not None:
+                if curr_room not in self.num_steps_in_each_room:
+                    self.num_steps_in_each_room[curr_room] = 0
+                self.num_steps_in_each_room[curr_room] += 1
 
         # get second preprocess
         self.agent_helper.set_goal_cat(goal)
@@ -108,6 +132,7 @@ class StubbornAgent(habitat.Agent):
             item = self.agent_states.goal_record(planner_inputs['goal'])
             stp = get_prediction(item,goal)
             if stp:
+                action['stop_reason'] = 'found goal'
                 return action
             else:
                 self.agent_states.clear_goal(
@@ -130,7 +155,9 @@ class StubbornAgent(habitat.Agent):
             gt_goal_positions.append([x,y])
         info['gt_goal_positions'] = gt_goal_positions
 
-        if self.args.set_goal_to_lmprior_room:
+        if self.args.explore_rooms:
+            # if len(self.room_to_bbs) == 0:
+            #     self.room_to_bbs = observations['room_id_to_aabb']
             if self.expgoal_room is None:
                 possible_goal_rooms = [goal_room for goal_room in obs['goal_rooms'] if goal_room not in self.visited_rooms]
                 if len(possible_goal_rooms) == 0:

@@ -186,7 +186,7 @@ class Agent_State:
         loc_c - 1:loc_c + 2] = 1.
 
         self.set_expgoal(obs, infos)
-        # if self.args.set_goal_to_lmprior_room and infos["expgoal_room_center"] is not None:
+        # if self.args.explore_rooms and infos["expgoal_room_center"] is not None:
         # else:
         #     self.global_goals = [[int(0.1 * self.local_w), int(0.1 * self.local_h)]]
         #     self.global_goals = [[min(x, int(self.local_w - 1)), min(y, int(self.local_h - 1))]
@@ -221,7 +221,7 @@ class Agent_State:
         self.local_currgoal_map = self.full_currgoal_map[:, self.lmb[0]:self.lmb[1], self.lmb[2]:self.lmb[3]]
     
     def set_expgoal(self, obs, infos):
-        if self.args.set_goal_to_lmprior_room and infos["expgoal_room_center"] is not None:
+        if self.args.explore_rooms and infos["expgoal_room_center"] is not None:
             # sort by distance
             # infos["gt_goal_positions"].sort(key=lambda pos: pos[0]**2 + pos[1]**2)
             # assert infos["gps"] == self.locs
@@ -489,7 +489,7 @@ class Agent_State:
             infos['sensor_pose'] )
         ).float().to(self.device)
         # set goal based on obs
-        if self.args.set_goal_to_lmprior_room and infos["expgoal_room_center"] is not None:
+        if self.args.explore_rooms and infos["expgoal_room_center"] is not None:
             self.set_expgoal(obs, infos)
         # set local map based on obs
         _, self.local_map, _, self.local_pose = \
@@ -556,7 +556,7 @@ class Agent_State:
                 self.global_goal_rotation_id = (self.global_goal_rotation_id + 1)%4
                 self.global_goal_preset = self.global_goal_rotation[self.global_goal_rotation_id]
                 self.hard_goal = False
-            if not self.args.set_goal_to_lmprior_room:
+            if not self.args.explore_rooms:
                 self.global_goals = [[int(self.global_goal_preset[0] * self.local_w),
                                 int(self.global_goal_preset[1] * self.local_h)]
                                 ]
@@ -580,7 +580,7 @@ class Agent_State:
         # Update long-term goal if target object is found
         found_goal = 0
         goal_maps = np.zeros((self.local_w, self.local_h))
-        if not self.args.set_goal_to_lmprior_room:
+        if not self.args.explore_rooms:
             # set to globa_goal for now, is changed below if goal obj detected in visualization
             goal_maps[self.global_goals[0][0], self.global_goals[0][1]] = 1
         elif infos["expgoal_room_center"] is None:
