@@ -248,11 +248,14 @@ class Agent_State:
             self.local_goals = [[self.global_goals[0][0] - self.lmb[0], self.global_goals[0][1] - self.lmb[2]]]
             if not self.local_currgoal_map[0].any():
                 # in new view, goal is out of scope
-                self.local_goals = [[min(x, int(self.local_w - 1)), min(y, int(self.local_h - 1))] for x, y in self.local_goals]
+                self.local_goals = [[max(0, min(x, int(self.local_w - 1))), max(0, min(y, int(self.local_h - 1)))] for x, y in self.local_goals]
                 self.local_currgoal_map[0, self.local_goals[0][0], self.local_goals[0][1]] = 1
             # self.global_goals = self.full_currgoal_map[0].nonzero()
         else:
-            self.global_goals = [[int(0.1 * self.local_w), int(0.1 * self.local_h)]]
+            # self.global_goals = [[int(0.1 * self.local_w), int(0.1 * self.local_h)]]
+            self.global_goals = [[int(self.global_goal_preset[0] * self.local_w),
+                            int(self.global_goal_preset[1] * self.local_h)]
+                            ]
             self.global_goals = [[min(x, int(self.local_w - 1)), min(y, int(self.local_h - 1))]
                                  for x, y in self.global_goals]
             self.local_goals = self.global_goals
@@ -489,7 +492,7 @@ class Agent_State:
             infos['sensor_pose'] )
         ).float().to(self.device)
         # set goal based on obs
-        if self.args.explore_rooms and infos["expgoal_room_center"] is not None:
+        if self.args.explore_rooms: #and infos["expgoal_room_center"] is not None:
             self.set_expgoal(obs, infos)
         # set local map based on obs
         _, self.local_map, _, self.local_pose = \
@@ -587,8 +590,6 @@ class Agent_State:
             goal_maps[self.local_goals[0][0], self.local_goals[0][1]] = 1
         else:
             goal_maps = self.local_currgoal_map[0].cpu().numpy()
-        if not goal_maps.any():
-            breakpoint()
 
         maxi = 0.0
         maxc = -1
