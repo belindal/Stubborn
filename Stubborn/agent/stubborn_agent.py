@@ -39,6 +39,7 @@ class StubbornAgent(habitat.Agent):
         self.expgoal_room_bb = None
         # self.room_to_bbs = {}
         self.num_steps_in_each_room = {}
+        self.agent_distance_from_goal = []
 
 
     def reset(self):
@@ -54,6 +55,8 @@ class StubbornAgent(habitat.Agent):
         self.expgoal_room_bb = None
         # self.room_to_bbs = {}
         self.num_steps_in_each_room = {}
+        self.agent_distance_from_goal = []
+        self.agent_positions = []
     
     def compute_gps_distance(self, pos1, pos2):
         return ((pos1 - pos2)**2).sum()**(1/2)
@@ -65,7 +68,8 @@ class StubbornAgent(habitat.Agent):
             observations['gps'], room_center,
         )
         steps_in_expgoal_room = self.num_steps_in_each_room.get(self.expgoal_room,0)
-        return distance < 0.75 or self.num_steps_in_each_room.get(self.expgoal_room,0) > 50
+        # return distance < 0.75 or 
+        return self.num_steps_in_each_room.get(self.expgoal_room,0) > 25
     
     def get_curr_room(self, observations):
         for room in observations['room_id_to_aabb']:
@@ -77,6 +81,7 @@ class StubbornAgent(habitat.Agent):
 
 
     def agent_stuck(self):
+        # return len(self.agent_distance_from_goal) > 50 and (min(self.agent_distance_from_goal) > 3 or compute_position_changes(self.agent_positions[len(self.agent_distance_from_goal):]) < 0.5)
         return self.args.detect_stuck and self.agent_states.stuck
 
     def act(self, observations):
@@ -91,6 +96,9 @@ class StubbornAgent(habitat.Agent):
         if self.args.explore_rooms:
             # if saw all objects in goal room, or agent is stuck; and haven't found goal, reset goal room.
             if self.expgoal_room is not None:
+                # cannot access curr_room
+                self.agent_distance_from_goal.append(self.compute_gps_distance(observations['gps'], convert_to_gps_coords(
+                    self.expgoal_room_bb.mean(-1), observations['start']['position'], observations['start']['rotation'])))
                 if (self.agent_seen_all_objs_in_curr_room(observations) or self.agent_stuck()) and not self.agent_states.found_goal:
                     self.visited_rooms.add(self.expgoal_room)
                     self.agent_states.clear_expgoal()
@@ -104,7 +112,8 @@ class StubbornAgent(habitat.Agent):
         info = self.get_info(observations)
         if self.args.explore_rooms:
             curr_room = self.get_curr_room(observations)
-            if curr_room is not None:
+            if curr_room is not None and curr_room == self.expgoal_room:
+                # num seps in room if room is the goal room
                 if curr_room not in self.num_steps_in_each_room:
                     self.num_steps_in_each_room[curr_room] = 0
                 self.num_steps_in_each_room[curr_room] += 1

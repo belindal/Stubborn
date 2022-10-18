@@ -9,7 +9,7 @@ def get_args():
     parser.add_argument('--do_error_analysis', action='store_true', default=False,
                         help='set to record error analysis to file / visualize errors')
     parser.add_argument('--explore_rooms', action='store_true', default=False)
-    parser.add_argument('--explore_room_order', type=str, choices=["gt", "distance", "lm_prior"], default="gt")
+    parser.add_argument('--explore_room_order', type=str, choices=["gt", "distance", "lm_prior", "gt_prior"], default="gt")
 
     # General Arguments
     parser.add_argument('--seed', type=int, default=1,
