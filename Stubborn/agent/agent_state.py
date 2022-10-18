@@ -244,7 +244,7 @@ class Agent_State:
                 self.clear_expgoal()
                 self.global_goals = [new_goal]
                 self.full_currgoal_map[0, self.global_goals[0][0], self.global_goals[0][1]] = 1
-            self.local_currgoal_map = self.full_currgoal_map[:, self.lmb[0]:self.lmb[1], self.lmb[2]:self.lmb[3]]
+            self.local_currgoal_map = self.full_currgoal_map[:, self.lmb[0]:self.lmb[1], self.lmb[2]:self.lmb[3]].clone()
             self.local_goals = [[self.global_goals[0][0] - self.lmb[0], self.global_goals[0][1] - self.lmb[2]]]
             if not self.local_currgoal_map[0].any():
                 # in new view, goal is out of scope
