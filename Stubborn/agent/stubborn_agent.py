@@ -64,16 +64,18 @@ class StubbornAgent(habitat.Agent):
     def agent_seen_all_objs_in_curr_room(self, observations):
         # proxy: close enough to vicinity of room, or agent is stuck
         room_center = convert_to_gps_coords(self.expgoal_room_bb.mean(-1), observations['start']['position'], observations['start']['rotation'])
-        distance = self.compute_gps_distance(
-            observations['gps'], room_center,
-        )
-        steps_in_expgoal_room = self.num_steps_in_each_room.get(self.expgoal_room,0)
-        # return distance < 0.75 or 
-        return self.num_steps_in_each_room.get(self.expgoal_room,0) > 25
+        if self.args.goal_switch_mode == "num_steps":
+            steps_in_expgoal_room = self.num_steps_in_each_room.get(self.expgoal_room,0)
+            return self.num_steps_in_each_room.get(self.expgoal_room,0) > 25
+        elif self.args.goal_switch_mode == "proximity":
+            distance = self.compute_gps_distance(
+                observations['gps'], room_center,
+            )
+            return distance < 0.75
     
     def get_curr_room(self, observations):
-        for room in observations['room_id_to_aabb']:
-            room_bb = observations['room_id_to_aabb'][room]
+        for room in observations['accessible_rooms']:
+            room_bb = observations['room_id_to_info'][room]['bb']
             if (observations['self_abs_position'] >= room_bb[:,0]).all() and (observations['self_abs_position'] <= room_bb[:,1]).all():
                 # in room
                 return room
@@ -138,15 +140,26 @@ class StubbornAgent(habitat.Agent):
             self.agent_states.clear_goal_and_set_gt_map(planner_inputs['goal'])
             return {'action': 1}
         if action['action'] == 0:
-            item = self.agent_states.goal_record(planner_inputs['goal'])
-            stp = get_prediction(item,goal)
-            if stp:
+            stp = True
+            if self.args.override_mode == "prior":
+                # need some process to ensure we haven't explored everything????
+                assert self.args.explore_room_order == "lm_prior" or self.args.explore_room_order == "gt_prior"
+                room_priors = []
+                if curr_room is not None:
+                    curr_room_names = observations['room_id_to_info'][curr_room]['name']
+                    for room_name in curr_room_names:
+                        if room_name == "Unknown": continue
+                        room_priors.append(observations['room2score'][room_name])
+                stp = len(room_priors) == 0 or max(room_priors) >= 0.5
+            if self.args.override_mode == "classifier":
+                item = self.agent_states.goal_record(planner_inputs['goal'])
+                stp = get_prediction(item,goal)
+            if not stp:
+                self.agent_states.clear_goal(planner_inputs['goal'])
+                return {'action': 1}
+            else:
                 action['stop_reason'] = 'found goal'
                 return action
-            else:
-                self.agent_states.clear_goal(
-                    planner_inputs['goal'])
-                return {'action': 1}
         return action
 
     def get_info(self, obs):
@@ -165,15 +178,13 @@ class StubbornAgent(habitat.Agent):
         info['gt_goal_positions'] = gt_goal_positions
 
         if self.args.explore_rooms:
-            # if len(self.room_to_bbs) == 0:
-            #     self.room_to_bbs = observations['room_id_to_aabb']
             if self.expgoal_room is None:
                 possible_goal_rooms = [goal_room for goal_room in obs['goal_rooms'] if goal_room not in self.visited_rooms]
                 if len(possible_goal_rooms) == 0:
                     info['expgoal_room_center'] = None
                 else:
                     self.expgoal_room = possible_goal_rooms[0]
-                    self.expgoal_room_bb = obs['room_id_to_aabb'][self.expgoal_room]
+                    self.expgoal_room_bb = obs['room_id_to_info'][self.expgoal_room]['bb']
             if self.expgoal_room is not None:
                 goal_room_gps = convert_to_gps_coords(self.expgoal_room_bb.mean(-1), obs['start']['position'], obs['start']['rotation'])
                 x,y = self.get_sim_location(goal_room_gps)

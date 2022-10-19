@@ -19,11 +19,11 @@ def evaluate(fn, print_prefix, alt_method_envids=set()):
         for line in f:
             if "===" in line: ln = 0; continue
             if len(line.strip()) == 0: ln = 0; continue
+            ln += 1
             line = json.loads(line)
             if line["target"] not in obj_accuracy:
                 obj_accuracy[line["target"]] = [0,0]
-            if line["target"] != "tv_monitor": continue
-            ln += 1
+            if line["target"] != "sofa": continue
             # if line["env_id"] in bad_episodes: continue
             # if "XB4GS9ShBRE" not in line["env_id"]: continue
             # if "Nfvxx8J5NCo" not in line["env_id"]: continue
@@ -63,9 +63,9 @@ def evaluate(fn, print_prefix, alt_method_envids=set()):
     print(f"   obj accuracy: " + str({obj: obj_accuracy[obj][0] / obj_accuracy[obj][1] if obj_accuracy[obj][1] != 0 else 0 for obj in obj_accuracy}))
     return alt_method_envids, {"successes": successes, "failures": failures}
 
-alt_method_envids, error_analysis = evaluate("tolmroom_persisttop1_val_onlysamefloor/results.jsonl", "To LM Room (no fallback)")
-evaluate("tolmroom_onlystepsthresholdfallback_val_onlysamefloor/results.jsonl", "To LM Room (steps in goal room threshold)", alt_method_envids)
-_, error_analysis_lm_room = evaluate("tolmroom_top1_val_onlysamefloor/results.jsonl", "To LM Room (total steps in room + proximity threshold)")
+# alt_method_envids, error_analysis = evaluate("tolmroom_persisttop1_val_onlysamefloor/results.jsonl", "To LM Room (no fallback)")
+alt_method_envids, error_analysis_lm_room_onlygoalsteps = evaluate("tolmroom_onlystepsthresholdfallback_val_onlysamefloor/results.jsonl", "To LM Room (steps in goal room threshold)")
+_, error_analysis_lm_room_proximity_totsteps = evaluate("tolmroom_top1_val_onlysamefloor/results.jsonl", "To LM Room (total steps in room + proximity threshold)")
 _, error_analysis_gt_room = evaluate("togtroom_nofallback_val_onlysamefloor/results.jsonl", "To GT Room (no fallback)", alt_method_envids)
 # evaluate("togtroom_fallback_val_onlysamefloor/results.jsonl", "To GT Room (fallback)", alt_method_envids)
 # evaluate("orig_val_onlysamefloor/results.jsonl", "Orig explore", alt_method_envids)
@@ -73,5 +73,5 @@ _, error_analysis_random_room = evaluate("torandroom_val_onlysamefloor/results.j
 # evaluate("to_gtpriorroom_val_onlysamefloor/results.jsonl", "Gt priors", alt_method_envids)
 evaluate("to_gtpriorroom_persisttop1_val_onlysamefloor/results.jsonl", "Gt priors (only top 1)", alt_method_envids)
 # evaluate("to_gtpriorroom_nooverride_val_onlysamefloor/results.jsonl", "Gt priors (only top 1)", alt_method_envids)
-for env_id in set(error_analysis_gt_room["failures"].keys()).intersection(set(error_analysis_lm_room["successes"].keys())):
-    print(env_id, error_analysis_gt_room["failures"][env_id])
+for env_id in set(error_analysis_lm_room_onlygoalsteps["failures"].keys()).intersection(set(error_analysis_lm_room_proximity_totsteps["successes"].keys())):
+    print(env_id, error_analysis_lm_room_onlygoalsteps["failures"][env_id])
