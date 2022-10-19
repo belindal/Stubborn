@@ -510,11 +510,11 @@ class Agent_Helper:
         dump_dir = "{}/dump/{}/".format(args.dump_location,
                                         args.exp_name)
         ep_dir = '{}/episodes/thread_{}/eps_{}/'.format(
-            dump_dir, self.rank, self.episode_no)
+            dump_dir, self.rank, inputs['env_id'])
         if not os.path.exists(ep_dir):
             os.makedirs(ep_dir)
         ep_dir = '{}/episodes/thread_{}/eps_{}/'.format(
-            dump_dir, self.rank+1, self.episode_no)
+            dump_dir, self.rank+1, inputs['env_id'])
         if not os.path.exists(ep_dir):
             os.makedirs(ep_dir)
         map_pred = inputs['map_pred']
@@ -594,12 +594,12 @@ class Agent_Helper:
 
         if args.print_images:
             fn = '{}/episodes/thread_{}/eps_{}/{}-{}-Vis-{}.png'.format(
-                dump_dir, self.rank, self.episode_no,
+                dump_dir, self.rank, inputs['env_id'],
                 self.rank, self.episode_no, self.timestep)
 
             cv2.imwrite(fn, self.vis_image)
             fn2 = '{}/episodes/thread_{}/eps_{}/{}-{}-Vis-{}.png'.format(
-                dump_dir, self.rank+1, self.episode_no,
+                dump_dir, self.rank+1, inputs['env_id'],
                 self.rank, self.episode_no, self.timestep)
             #if self.mask is not None:
             #    self.save_semantic(self.mask.cpu().numpy(),fn2)

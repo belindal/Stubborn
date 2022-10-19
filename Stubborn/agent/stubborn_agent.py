@@ -133,6 +133,7 @@ class StubbornAgent(habitat.Agent):
             self.first_obs = False
 
         planner_inputs = self.agent_states.upd_agent_state(obs,info)
+        planner_inputs['env_id'] = observations['env_id']
         # now get action
         action = self.agent_helper.plan_act_and_preprocess(planner_inputs)
         # For data collection purpose, collect data to train the object detection module
