@@ -4,6 +4,9 @@
 env CUDA_VISIBLE_DEVICES=9
 export CHALLENGE_CONFIG_FILE=configs/challenge_objectnav2022.local.rgbd.yaml
 python Stubborn/eval.py --timestep_limit 451 --evaluation local
+
+env CUDA_VISIBLE_DEVICES=8 python Stubborn/eval.py --timestep_limit 451 --evaluation local -v 2 --print_images 1 -d lm_socratic_override --explore_rooms --explore_room_order lm_socratic --override_mode socratic --detect_stuck 1 --do_error_analysis
+env CUDA_VISIBLE_DEVICES=8 python Stubborn/eval.py --timestep_limit 451 --evaluation local -v 2 --print_images 1 -d socratic_rooms --explore_rooms --explore_room_order lm_prior --override_mode prior_classifier --detect_stuck 1 --do_error_analysis
 ```
 
 This is the implementation of the Stubborn Agent (yuumi_the_magic_cat on the Habitat Challenge Leaderboard).

@@ -16,6 +16,7 @@ from habitat.utils.geometry_utils import (
     quaternion_rotate_vector,
 )
 from habitat.core.benchmark import convert_to_gps_coords, convert_to_world_coords
+from habitat.utils.gpt3_utils import engine, gpt3_file, gpt3_cache, save_gpt3_result, global_prompt_verification, gpt3_constrained_generation
 
 class StubbornAgent(habitat.Agent):
     def __init__(self,args,task_config: habitat.Config):
@@ -40,6 +41,7 @@ class StubbornAgent(habitat.Agent):
         # self.room_to_bbs = {}
         self.num_steps_in_each_room = {}
         self.agent_distance_from_goal = []
+        self.potential_stop_scenes = {}
 
 
     def reset(self):
@@ -57,6 +59,7 @@ class StubbornAgent(habitat.Agent):
         self.num_steps_in_each_room = {}
         self.agent_distance_from_goal = []
         self.agent_positions = []
+        self.potential_stop_scenes = {}
     
     def compute_gps_distance(self, pos1, pos2):
         return ((pos1 - pos2)**2).sum()**(1/2)
@@ -90,11 +93,11 @@ class StubbornAgent(habitat.Agent):
         self.timestep += 1
         # if passed the step limit and we haven't found the goal, stop.
         if self.timestep > self.args.timestep_limit and not self.agent_states.found_goal:
-            return {'action': 0, 'stop_reason': 'timeout'}
+            return {'action': 0, 'stop_reason': 'timeout', 'visited_goal_rooms': list(self.visited_rooms), 'potential_stop_scenes': self.potential_stop_scenes}
         if self.timestep > 495:
-            return {'action': 0, 'stop_reason': 'timeout'}
+            return {'action': 0, 'stop_reason': 'timeout', 'visited_goal_rooms': list(self.visited_rooms), 'potential_stop_scenes': self.potential_stop_scenes}
         if self.agent_stuck():
-            return {'action': 0, 'stop_reason': 'stuck'}
+            return {'action': 0, 'stop_reason': 'stuck', 'visited_goal_rooms': list(self.visited_rooms), 'potential_stop_scenes': self.potential_stop_scenes}
         if self.args.explore_rooms:
             # if saw all objects in goal room, or agent is stuck; and haven't found goal, reset goal room.
             if self.expgoal_room is not None:
@@ -142,6 +145,63 @@ class StubbornAgent(habitat.Agent):
             return {'action': 1}
         if action['action'] == 0:
             stp = True
+            if self.args.override_mode == "prior_classifier":
+                item = self.agent_states.goal_record(planner_inputs['goal'])
+                print(os.path.join(self.args.dump_location, "dump/exp1/episodes/thread_0", "eps_"+planner_inputs["env_id"], f"0-{self.total_episodes}-Vis-{self.timestep}.png"))
+                stp, class_score = get_prediction(item,goal)
+                assert self.args.explore_room_order == "lm_prior" or self.args.explore_room_order == "gt_prior"
+                room_priors = []
+                if curr_room is not None:
+                    curr_room_names = observations['room_id_to_info'][curr_room]['name']
+                    for room_name in curr_room_names:
+                        if room_name == "Unknown": continue
+                        room_priors.append(observations['room2score'][room_name])
+                try:
+                    stp = (len(room_priors) == 0 and stp) or (len(room_priors) > 0 and max(room_priors) * (1-class_score[0][0]) > 0.2)
+                except:
+                    breakpoint()
+                classifier_features = item['total']
+                classifier_features['cumu0'] = item['cumu'][0]
+                classifier_features['conflict'] = item['conflict']['normal']
+                # if not stp:
+                self.potential_stop_scenes[self.timestep] = {"scores": {"LM_room": room_priors, "clf_out": (1-class_score[0][0]), "clf_ft": {feat: float(classifier_features[feat]) for feat in classifier_features}}}
+            if self.args.override_mode == "socratic":
+                # room_prompt = ', '.join(room_prompt)
+                if curr_room is None:
+                    # all rooms
+                    curr_room_names = " or ".join(observations['accessible_rooms'])
+                else:
+                    curr_room_names = ""
+                    curr_room_names = [room_name for room_name in observations['room_id_to_info'][curr_room]['name'] if room_name != "Unknown"]
+                curr_room_names = " or ".join(curr_room_names)
+                # all_remaining_room_types = [room_type for room_type in all_room_types]
+                prompt_so_far = f"{global_prompt_verification}You are in the {curr_room_names} and you think you see a {observations['gt_goal_name']}. Is it actually a {observations['gt_goal_name']}? "
+                classifier_idx = gpt3_constrained_generation(
+                    engine=engine,
+                    input_prefix=prompt_so_far,
+                    classes=["Yes", "No"],
+                    cache=gpt3_cache,
+                    gpt3_file=gpt3_file,
+                )
+                breakpoint()
+                stp = classifier_idx == 0  # stop iff actually the right item
+                self.potential_stop_scenes[self.timestep] = {"scores": {"LM_room": [classifier_idx, prompt_so_far]}}
+                """
+                for _ in all_room_types:
+                    if len(all_remaining_room_types) == 1:
+                        sorted_room_types.append(all_remaining_room_types[0])
+                        break
+                    # backup constrained generation
+                    next_room_idx = gpt3_constrained_generation(
+                        engine=engine,
+                        input_prefix=prompt_so_far,
+                        classes=all_remaining_room_types,
+                        cache=gpt3_cache,
+                        gpt3_file=gpt3_file,
+                    )
+                    prompt_so_far += f"{all_remaining_room_types[next_room_idx]}. If not found, go to each "
+                    sorted_room_types.append(all_remaining_room_types[next_room_idx])
+                """
             if self.args.override_mode == "prior":
                 # need some process to ensure we haven't explored everything????
                 assert self.args.explore_room_order == "lm_prior" or self.args.explore_room_order == "gt_prior"
@@ -152,15 +212,23 @@ class StubbornAgent(habitat.Agent):
                         if room_name == "Unknown": continue
                         room_priors.append(observations['room2score'][room_name])
                 stp = len(room_priors) == 0 or max(room_priors) >= 0.5
+                # if not stp:
+                self.potential_stop_scenes[self.timestep] = {"scores": [None if len(room_priors) == 0 else max(room_priors)]}
             if self.args.override_mode == "classifier":
                 item = self.agent_states.goal_record(planner_inputs['goal'])
-                stp = get_prediction(item,goal)
+                stp, score = get_prediction(item,goal)
+                stp = (1 - score[0][0]) > 0.5
+                # if not stp:
+                try:
+                    self.potential_stop_scenes[self.timestep] = {"score": 1 - score[0][0]}
+                except:
+                    breakpoint()
             if not stp:
                 self.agent_states.clear_goal(planner_inputs['goal'])
                 return {'action': 1}
             else:
-                action['stop_reason'] = 'found goal'
-                return action
+                # action['stop_reason'] = 'found goal'
+                return {'action': 0, 'stop_reason': 'found goal', 'visited_goal_rooms': list(self.visited_rooms), 'potential_stop_scenes': self.potential_stop_scenes}
         return action
 
     def get_info(self, obs):
@@ -185,7 +253,10 @@ class StubbornAgent(habitat.Agent):
                     info['expgoal_room_center'] = None
                 else:
                     self.expgoal_room = possible_goal_rooms[0]
-                    self.expgoal_room_bb = obs['room_id_to_info'][self.expgoal_room]['bb']
+                    try:
+                        self.expgoal_room_bb = obs['room_id_to_info'][self.expgoal_room]['bb']
+                    except:
+                        import pdb; pdb.set_trace()
             if self.expgoal_room is not None:
                 goal_room_gps = convert_to_gps_coords(self.expgoal_room_bb.mean(-1), obs['start']['position'], obs['start']['rotation'])
                 x,y = self.get_sim_location(goal_room_gps)

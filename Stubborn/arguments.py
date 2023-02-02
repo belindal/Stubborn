@@ -9,9 +9,9 @@ def get_args():
     parser.add_argument('--do_error_analysis', action='store_true', default=False,
                         help='set to record error analysis to file / visualize errors')
     parser.add_argument('--explore_rooms', action='store_true', default=False)
-    parser.add_argument('--explore_room_order', type=str, choices=["gt", "distance", "lm_prior", "gt_prior"], default="gt")
+    parser.add_argument('--explore_room_order', type=str, choices=["gt", "distance", "lm_prior", "gt_prior", "lm_socratic"], default="gt")
     parser.add_argument('--goal_switch_mode', type=str, choices=[None, "num_steps", "proximity"], default=None, help="Determine when to switch to next exploration goal. None for no switching.")
-    parser.add_argument('--override_mode', type=str, choices=[None, "classifier", "prior"], default="classifier", help="Determine when to override model decision at end. None for no overriding.")
+    parser.add_argument('--override_mode', type=str, choices=[None, "classifier", "prior", "prior_classifier", "socratic"], default="classifier", help="Determine when to override model decision at end. None for no overriding.")
 
     # General Arguments
     parser.add_argument('--seed', type=int, default=1,

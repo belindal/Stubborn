@@ -8,6 +8,7 @@ import pickle
 import matplotlib.pyplot as plt
 from scipy.stats.stats import pearsonr
 import numpy as np
+from Stubborn.constants import habitat_labels_r, goal_labels
 
 
 NB = True
@@ -92,7 +93,7 @@ def get_feature_for(b,interest,feature_mode,rg = None):
     return np.array(x),np.array(y)
 
 
-def get_oracle(b,interest,rg = None):
+def get_oracle(b,interest,rg = None, debug=False):
     param = params[interest]
     if param is None:
         return None
@@ -104,12 +105,20 @@ def get_oracle(b,interest,rg = None):
     else:
         classifier = MultinomialNB()
     x,y = get_feature_for(b,interest,feature_mode,rg)
+    if debug:
+        breakpoint()
+    if (y == 1).all() or (y == 0).all():
+        # not enough evidence to learn...
+        return None
     if x is None:
         return None
     return classifier.fit(x, y)
 
 predictors = {}
 for i in range(1,22):
+    # do_pause=False
+    # if habitat_labels_r[i] in goal_labels.values():
+    #     do_pause = True
     predictors[i] = get_oracle(b,i)
 
 def recal_predictors(rg):
@@ -120,9 +129,11 @@ def recal_predictors(rg):
 
 def get_prediction(item,goal):
     if params[goal] is None or item['step']>params[goal][2]:
-        return True
+        return True, [[0.0, 1.0]]
     if predictors[goal] is None:
-        return True
+        return True, [[0.0, 1.0]]
+    # cannot *possibly* have learned a good classifier for 14 (tv)
     sc = np.array([item2feature(item)])
-    score = predictors[goal].predict(sc)
-    return score > 0.5
+    score = predictors[goal].predict(sc)  # [False, True]
+    probs = predictors[goal].predict_proba(sc)
+    return score > 0.5, probs

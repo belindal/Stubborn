@@ -448,6 +448,7 @@ class Agent_State:
         max_ratio = -1
 
         #max score
+        # channel 5 = max confidence
         for i in range(len(ind2[0])):
             n,m = ind2[0][i],ind2[1][i]
             if self.local_grid[5,n,m] > max_score:
@@ -455,6 +456,7 @@ class Agent_State:
                 ans["score"] = self.local_grid[:,n,m].cpu().numpy()
 
         #highest cumu
+        # channel 1 = cumulative confidence (over frames)
         for i in range(len(ind2[0])):
             n,m = ind2[0][i],ind2[1][i]
             if self.local_grid[1,n,m] > max_cumu:
@@ -462,6 +464,7 @@ class Agent_State:
                 ans["cumu"] = self.local_grid[:,n,m].cpu().numpy()
 
         #highest ratio
+        # channel 0 = # of frames
         for i in range(len(ind2[0])):
             n,m = ind2[0][i],ind2[1][i]
             if self.local_grid[1,n,m]/self.local_grid[0,n,m] > max_ratio:
